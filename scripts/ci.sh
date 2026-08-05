@@ -5,19 +5,17 @@ set -eu
 root_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$root_dir"
 
-# Keep the local gate independent of machine-specific Go cache locations.
-# No module dependencies are expected in SDK-001; GOPROXY=off makes that
-# boundary explicit and prevents an accidental network fetch.
+# Keep build artifacts local while using the preloaded module cache. The
+# dependency set is intentionally resolved offline; GOPROXY/GOSUMDB make an
+# accidental network fetch impossible.
 if [ -z "${GOCACHE+x}" ]; then
   GOCACHE="$root_dir/.cache/go-build"
   export GOCACHE
 fi
-if [ -z "${GOMODCACHE+x}" ]; then
-  GOMODCACHE="$root_dir/.cache/go-mod"
-  export GOMODCACHE
-fi
 GOPROXY=off
 export GOPROXY
+GOSUMDB=off
+export GOSUMDB
 GOTOOLCHAIN=local
 export GOTOOLCHAIN
 
