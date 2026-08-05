@@ -2,8 +2,8 @@
 // workbench instances.
 //
 // SDK-002 adds the authentication and transport foundation: mTLS loading and
-// rotation, short-lived runtime tokens, actor assertions, and the temporary
-// hand-written wire codec for ExchangeRuntimeToken. The codec is deliberately
-// isolated and is replaced or equivalently asserted when SDK-004 codegen
-// lands; it does not expose protowire details in the public API.
+// rotation, short-lived runtime tokens, actor assertions, and the generic
+// authenticated gRPC call boundary. SDK-004 adds generated runtime protobuf
+// types and typed control-plane wrappers; ExchangeRuntimeToken uses the
+// standard protobuf codec and is kept behind GRPCTokenSource.
 package musereelsdk

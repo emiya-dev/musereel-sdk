@@ -80,6 +80,46 @@ func TestCanonicalGatewayRoutes(t *testing.T) {
 	}
 }
 
+func TestRuntimeAssertionOperationsUseFrozenOperationStrings(t *testing.T) {
+	tests := []struct {
+		method    string
+		operation string
+	}{
+		{method: "ConfirmRegistration", operation: "registration:confirm"},
+		{method: "CreateOrder", operation: "order:create"},
+		{method: "GetOrder", operation: "order:get"},
+		{method: "GetBalance", operation: "balance:get"},
+		{method: "ListLedger", operation: "ledger:list"},
+	}
+	for _, test := range tests {
+		path := "/runtime.v1.RuntimeService/" + test.method
+		if err := validateOperationAndMethod("POST", path, test.operation); err != nil {
+			t.Errorf("validateOperationAndMethod(%q, %q): %v", test.method, test.operation, err)
+		}
+		if err := validateOperationAndMethod("POST", path, test.method); err == nil {
+			t.Errorf("legacy gRPC operation %q was accepted for %s", test.method, test.method)
+		}
+	}
+}
+
+func TestRuntimeMethodsWithoutAssertionsRejectOperations(t *testing.T) {
+	for _, method := range []string{
+		"ExchangeRuntimeToken",
+		"ResolveRegistration",
+		"VerifyAndConfirmPayment",
+		"SyncIdentity",
+		"SyncVerificationStatus",
+		"DisableIdentity",
+		"GetSkuCatalog",
+		"GetOfferCatalog",
+	} {
+		path := "/runtime.v1.RuntimeService/" + method
+		if err := validateOperationAndMethod("POST", path, "anything"); err == nil {
+			t.Errorf("operation accepted for runtime method without assertion: %s", method)
+		}
+	}
+}
+
 func TestGatewayFingerprintGoldens(t *testing.T) {
 	tests := []struct {
 		name            string

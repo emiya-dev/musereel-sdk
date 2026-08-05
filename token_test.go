@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/emiya-dev/musereel-sdk/internal/wire"
+	runtimepb "github.com/emiya-dev/musereel-sdk/runtime"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
@@ -100,59 +100,34 @@ func TestCachedTokenSourceSingleFlight(t *testing.T) {
 	}
 }
 
-type tokenRPCServer interface {
-	ExchangeRuntimeToken(context.Context, *wire.ExchangeRuntimeTokenRequest) (*wire.ExchangeRuntimeTokenReply, error)
-}
-
 type tokenRPCService struct {
+	runtimepb.UnimplementedRuntimeServiceServer
 	mu       sync.Mutex
 	calls    int
 	expiryMS int64
 }
 
-func (service *tokenRPCService) ExchangeRuntimeToken(_ context.Context, request *wire.ExchangeRuntimeTokenRequest) (*wire.ExchangeRuntimeTokenReply, error) {
+func (service *tokenRPCService) ExchangeRuntimeToken(_ context.Context, request *runtimepb.ExchangeRuntimeTokenRequest) (*runtimepb.ExchangeRuntimeTokenReply, error) {
 	if request == nil {
 		return nil, status.Error(codes.InvalidArgument, "request is nil")
 	}
 	service.mu.Lock()
 	defer service.mu.Unlock()
 	service.calls++
-	return &wire.ExchangeRuntimeTokenReply{
-		RequestID:        fmt.Sprintf("request-%d", service.calls),
+	return &runtimepb.ExchangeRuntimeTokenReply{
+		RequestId:        fmt.Sprintf("request-%d", service.calls),
 		AccessToken:      fmt.Sprintf("grpc-token-%d", service.calls),
 		TokenType:        "Bearer",
 		ExpiresInSeconds: 300,
-		ExpiresAtMS:      service.expiryMS,
+		ExpiresAtMs:      service.expiryMS,
 	}, nil
 }
 
-func tokenRPCHandler(srv any, ctx context.Context, decode func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
-	request := new(wire.ExchangeRuntimeTokenRequest)
-	if err := decode(request); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(tokenRPCServer).ExchangeRuntimeToken(ctx, request)
-	}
-	info := &grpc.UnaryServerInfo{Server: srv, FullMethod: runtimeTokenMethod}
-	handler := func(ctx context.Context, request any) (any, error) {
-		return srv.(tokenRPCServer).ExchangeRuntimeToken(ctx, request.(*wire.ExchangeRuntimeTokenRequest))
-	}
-	return interceptor(ctx, request, info, handler)
-}
-
-func TestGRPCTokenSourceUsesEmptyRequestAndWireCodec(t *testing.T) {
+func TestGRPCTokenSourceUsesGeneratedEmptyRequest(t *testing.T) {
 	listener := bufconn.Listen(1024 * 1024)
 	service := &tokenRPCService{expiryMS: time.Unix(1_800_000_300, 0).UnixMilli()}
-	server := grpc.NewServer(grpc.ForceServerCodec(wire.Codec{}))
-	server.RegisterService(&grpc.ServiceDesc{
-		ServiceName: "runtime.v1.RuntimeService",
-		HandlerType: (*tokenRPCServer)(nil),
-		Methods: []grpc.MethodDesc{{
-			MethodName: "ExchangeRuntimeToken",
-			Handler:    tokenRPCHandler,
-		}},
-	}, service)
+	server := grpc.NewServer()
+	server.RegisterService(&runtimepb.RuntimeService_ServiceDesc, service)
 	go func() { _ = server.Serve(listener) }()
 	t.Cleanup(func() {
 		server.Stop()
@@ -227,7 +202,7 @@ func TestAuthenticatedRetryRefreshesAssertionButPreservesBusinessIdentity(t *tes
 	connection := &fakeConn{}
 	client := NewAuthenticatedClient(connection, source)
 	input := assertionInputForTest(t)
-	input.Operation = "GetBalance"
+	input.Operation = "balance:get"
 	input.Method = "POST"
 	input.CanonicalPath = "/runtime.v1.RuntimeService/GetBalance"
 	input.IdempotencyKey = ""

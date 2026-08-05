@@ -7,7 +7,8 @@ decision is made.
 SDK-002 adds the authentication and transport foundation: mTLS loading and
 certificate rotation, short-lived runtime-token caching, actor assertions, and
 the generic authenticated gRPC call boundary. Invocation wrappers belong to
-SDK-003, and generated control-plane clients belong to SDK-004.
+SDK-003. SDK-004 adds committed protobuf/gRPC generated code and the typed
+runtime control-plane client.
 
 ## Contract synchronization
 
@@ -31,11 +32,11 @@ The gateway HTTP surface is anchored to frozen chapter `06`, document version
 contract remains owned by Sluice; this SDK baseline records the anchor rather
 than duplicating route implementation or an additional HTTP contract source.
 
-The `ExchangeRuntimeToken` call currently uses a narrowly isolated,
-hand-written `protowire` transition codec because this checkout has no
-`protoc`/`buf`. It has golden-byte tests and must be replaced by, or retain
-equivalent assertions with, the SDK-004 generated codegen toolchain. The
-public API does not expose that codec's implementation detail.
+`runtime/runtime.pb.go` and `runtime/runtime_grpc.pb.go` are generated from the
+frozen `contract-input/runtime.proto` with the pinned local protoc toolchain.
+`ExchangeRuntimeToken` now uses the generated protobuf messages and the
+standard gRPC protobuf codec; the former hand-written transition codec was
+removed after its golden-byte assertions were migrated to generated types.
 
 Run the complete local baseline with:
 
@@ -60,9 +61,9 @@ assertions, idempotency, and safe-retry behavior. The ledger, pricing,
 compliance, and supplier logic never belong in this SDK. The SDK must not
 provide any capability that bypasses server-side validation.
 
-This repository intentionally contains no business client logic yet. The
-absence of client code is part of the SDK-001 boundary, not an incomplete
-implementation.
+The SDK contains only typed transport/control-plane wrappers. Ledger, pricing,
+compliance, and supplier decisions remain server-side; the runtime client
+passes their string amounts and units through without numeric interpretation.
 
 ## Project status
 
