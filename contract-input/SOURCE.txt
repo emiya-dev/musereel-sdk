@@ -1,0 +1,5 @@
+source_repo: sluice (internal)
+source_path: backend/service/runtime/rpc/runtime.proto
+source_commit: 94de20732e1a3c5f42c9d1d5f42e293fdf8f42d0
+sha256: 389a4d8e49acd372afc74abd6bd75b730c81a445f780c826af406b91507fde71
+frozen_at: 2026-08-05

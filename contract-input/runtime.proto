@@ -1,0 +1,326 @@
+syntax = "proto3";
+
+package runtime.v1;
+
+option go_package = "./runtime";
+
+// RuntimeService 是工作台可调用的运行时订单与支付控制面白名单。
+service RuntimeService {
+  // ExchangeRuntimeToken 用 mTLS 客户端证书换取短期不透明访问令牌。
+  rpc ExchangeRuntimeToken(ExchangeRuntimeTokenRequest) returns (ExchangeRuntimeTokenReply);
+  // ResolveRegistration 解析公有 site token 或 dedicated scope，产出十分钟 intent。
+  rpc ResolveRegistration(ResolveRegistrationRequest) returns (RegistrationIntent);
+  // ConfirmRegistration 单事务创建身份、成员关系、归属、邀请码占用与可选赠送。
+  rpc ConfirmRegistration(ConfirmRegistrationRequest) returns (RegistrationReply);
+  // CreateOrder 从目录价格行冻结应付金额与当前付款方。
+  rpc CreateOrder(CreateOrderRequest) returns (CreateOrderReply);
+  // VerifyAndConfirmPayment 复验渠道原始证明并原子提交单次 grant 或周期计划。
+  rpc VerifyAndConfirmPayment(VerifyAndConfirmPaymentRequest) returns (VerifyAndConfirmPaymentReply);
+  // GetOrder 返回当前 actor 付款方范围内的订单稳定事实。
+  rpc GetOrder(GetOrderRequest) returns (GetOrderReply);
+  // SyncIdentity 把已存在 identity 的最新生命周期事实同步为 active。
+  rpc SyncIdentity(SyncIdentityRequest) returns (IdentityReply);
+  // SyncVerificationStatus 只同步实名状态、时点与不可逆凭证引用。
+  rpc SyncVerificationStatus(SyncVerificationStatusRequest) returns (IdentityReply);
+  // DisableIdentity 把已存在 identity 的最新生命周期事实同步为 disabled。
+  rpc DisableIdentity(DisableIdentityRequest) returns (IdentityReply);
+  // GetBalance 按 lot 聚合派生账户账面余额与免费 / 付费拆分。
+  rpc GetBalance(GetBalanceRequest) returns (BalanceReply);
+  // ListLedger 按稳定全序返回用户可见额度流水。
+  rpc ListLedger(ListLedgerRequest) returns (LedgerReply);
+  // GetSkuCatalog 返回当前生效的公开 SKU 售价目录。
+  rpc GetSkuCatalog(GetSkuCatalogRequest) returns (SkuCatalogReply);
+  // GetOfferCatalog 返回当前生效的公开 Offer 售价目录。
+  rpc GetOfferCatalog(GetOfferCatalogRequest) returns (OfferCatalogReply);
+}
+
+message ExchangeRuntimeTokenRequest {}
+
+message ExchangeRuntimeTokenReply {
+  string request_id = 1;
+  string access_token = 2;
+  string token_type = 3;
+  int64 expires_in_seconds = 4;
+  int64 expires_at_ms = 5;
+}
+
+message ResolveRegistrationRequest {
+  string site_context_token = 1;
+  string invite_code = 2;
+}
+
+message RegistrationIntent {
+  string request_id = 1;
+  string registration_intent_token = 2;
+  string registration_intent_fingerprint = 3;
+  int64 expires_at_ms = 4;
+  bool invite_code_required = 5;
+  string registration_grant_units = 6;
+}
+
+message ConfirmRegistrationRequest {
+  string actor = 1;
+  string registration_intent_token = 2;
+  bytes actor_assertion = 3;
+}
+
+message RegistrationReply {
+  string request_id = 1;
+  string identity_id = 2;
+  string identity_status = 3;
+  string membership_status = 4;
+  optional RegistrationGrant registration_grant = 5;
+}
+
+message RegistrationGrant {
+  string grant_id = 1;
+  string granted_units = 2;
+  int64 created_at_ms = 3;
+}
+
+message CreateOrderRequest {
+  string idempotency_key = 1;
+  string actor = 2;
+  string offer_price_id = 3;
+  bytes actor_assertion = 4;
+}
+
+message CreateOrderReply {
+  string request_id = 1;
+  string order_id = 2;
+  string payable_amount = 3;
+  string currency = 4;
+  string status = 5;
+  int64 created_at_ms = 6;
+}
+
+message VerifyAndConfirmPaymentRequest {
+  string idempotency_key = 1;
+  string order_id = 2;
+  string channel = 3;
+  bytes signed_payload = 4;
+  map<string, string> signed_headers = 5;
+  string provider_query_ref = 6;
+}
+
+message VerifyAndConfirmPaymentReply {
+  string request_id = 1;
+  Order order = 2;
+  RetailGrant grant = 3;
+  reserved 4;
+  reserved "money_transaction";
+  GrantPlan grant_plan = 5;
+}
+
+message GetOrderRequest {
+  string actor = 1;
+  string order_id = 2;
+  bytes actor_assertion = 3;
+}
+
+message GetOrderReply {
+  string request_id = 1;
+  Order order = 2;
+}
+
+message Order {
+  string id = 1;
+  string offer_price_id = 2;
+  string payable_amount = 3;
+  string currency = 4;
+  string status = 5;
+  int64 created_at_ms = 6;
+  string paid_amount = 7;
+  int64 paid_at_ms = 8;
+  string payment_channel = 9;
+  string payment_transaction_id = 10;
+}
+
+message RetailGrant {
+  string id = 1;
+  string granted_units = 2;
+  string lot_id = 3;
+  string ledger_entry_id = 4;
+}
+
+message GrantPlan {
+  string id = 1;
+  string cadence = 2;
+  string units_per_period = 3;
+  int32 total_periods = 4;
+  int32 next_period_index = 5;
+  int64 active_from_ms = 6;
+  int64 active_to_ms = 7;
+}
+
+message SyncIdentityRequest {
+  string event_id = 1;
+  string actor = 2;
+  int64 occurred_at_ms = 3;
+}
+
+message SyncVerificationStatusRequest {
+  string event_id = 1;
+  string actor = 2;
+  bool verified = 3;
+  int64 verified_at_ms = 4;
+  string credential_ref = 5;
+  string issuer = 6;
+}
+
+message DisableIdentityRequest {
+  string event_id = 1;
+  string actor = 2;
+  int64 disabled_at_ms = 3;
+}
+
+message IdentityReply {
+  string request_id = 1;
+  string event_id = 2;
+  string identity_id = 3;
+  string actor = 4;
+  string identity_status = 5;
+  string verification_status = 6;
+  int64 state_changed_at_ms = 7;
+  optional int64 verification_changed_at_ms = 8;
+  bool event_applied = 9;
+}
+
+message GetBalanceRequest {
+  string actor = 1;
+  bytes actor_assertion = 2;
+}
+
+message BalanceReply {
+  string request_id = 1;
+  int64 as_of_ms = 2;
+  string posted_units = 3;
+  string held_units = 4;
+  string available_units = 5;
+  string paid_available_units = 6;
+  string free_available_units = 7;
+}
+
+message ListLedgerRequest {
+  string actor = 1;
+  int32 page_size = 2;
+  string page_cursor = 3;
+  bytes actor_assertion = 4;
+}
+
+message LedgerReply {
+  string request_id = 1;
+  int64 snapshot_at_ms = 2;
+  repeated LedgerItem entries = 3;
+  string next_page_cursor = 4;
+}
+
+message LedgerItem {
+  string entry_id = 1;
+  string entry_type = 2;
+  string units = 3;
+  int64 created_at_ms = 4;
+  string balance_class = 5;
+  optional string sku_id = 6;
+  optional string invocation_id = 7;
+  optional string task_ref = 8;
+  optional string source_type = 9;
+  optional string origin = 10;
+}
+
+message GetSkuCatalogRequest {}
+
+message SkuCatalogReply {
+  string request_id = 1;
+  string catalog_version = 2;
+  int64 generated_at_ms = 3;
+  repeated SkuCatalogItem skus = 4;
+}
+
+message SkuCatalogItem {
+  string sku_id = 1;
+  string display_name = 2;
+  string delivery_mode = 3;
+  string schema_version = 4;
+  string result_schema_version = 5;
+  bytes request_schema_jcs = 6;
+  SkuPublicPrice price = 7;
+  repeated SkuSupportedSchema supported_request_schemas = 8;
+}
+
+message SkuSupportedSchema {
+  string schema_version = 1;
+  bytes request_schema_jcs = 2;
+}
+
+message SkuPublicPrice {
+  string sku_price_id = 1;
+  int32 version = 2;
+  string pricing_mode = 3;
+  int64 effective_from_ms = 4;
+  optional int64 effective_to_ms = 5;
+  oneof rule {
+    FlatPrice flat = 6;
+    TokenTieredPrice token_tiered = 7;
+    PerImagePrice per_image = 8;
+    PerSecondPrice per_second = 9;
+  }
+}
+
+message FlatPrice {
+  string units = 1;
+}
+
+message TokenTier {
+  string context_from_tokens = 1;
+  string context_to_tokens = 2;
+  string uncached_input_units_per_million = 3;
+  string cached_input_units_per_million = 4;
+  string output_units_per_million = 5;
+}
+
+message TokenTieredPrice {
+  repeated TokenTier tiers = 1;
+}
+
+message PerImageTier {
+  string resolution = 1;
+  string units_per_image = 2;
+}
+
+message PerImagePrice {
+  repeated PerImageTier tiers = 1;
+}
+
+message PerSecondTier {
+  string resolution = 1;
+  string units_per_second = 2;
+}
+
+message PerSecondPrice {
+  repeated PerSecondTier tiers = 1;
+}
+
+message GetOfferCatalogRequest {}
+
+message OfferCatalogReply {
+  string request_id = 1;
+  string catalog_version = 2;
+  int64 generated_at_ms = 3;
+  repeated OfferCatalogItem offers = 4;
+}
+
+message OfferCatalogItem {
+  string offer_id = 1;
+  string offer_price_id = 2;
+  string display_name = 3;
+  string delivery_kind = 4;
+  string granted_units = 5;
+  string cadence = 6;
+  int32 total_periods = 7;
+  repeated string sku_scope = 8;
+  string payable_amount = 9;
+  string currency = 10;
+  int64 effective_from_ms = 11;
+  optional int64 effective_to_ms = 12;
+}

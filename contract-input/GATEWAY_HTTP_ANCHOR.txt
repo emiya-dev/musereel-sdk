@@ -1,0 +1,9 @@
+source_repo: sluice (internal)
+source_doc: docs/product/06-工作台对接契约.md
+sections: §4.2 (invocation 四路由) + §5.1 (site-context 签发)
+source_commit: 94de20732e1a3c5f42c9d1d5f42e293fdf8f42d0
+route_count: 5
+frozen_at: 2026-08-05
+purpose: SDK gateway HTTP 面的同步锚点——HTTP 契约的唯一事实源是 sluice 仓上述文档
+  章节在 source_commit 时点的内容，本仓不复制路由细节；SDK-003 实现前须按此锚点
+  重新核对，源文档变更时更新本锚并按 CONTRIBUTING 的 breaking 纪律评估。
