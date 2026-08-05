@@ -35,12 +35,20 @@ var runtimeMethods = map[string]struct{}{
 	"GetOfferCatalog":         {},
 }
 
-var runtimeQueryOperations = map[string]struct{}{
+var runtimeQueryMethods = map[string]struct{}{
 	"GetOrder":        {},
 	"GetBalance":      {},
 	"ListLedger":      {},
 	"GetSkuCatalog":   {},
 	"GetOfferCatalog": {},
+}
+
+var runtimeAssertionOperations = map[string]string{
+	"ConfirmRegistration": "registration:confirm",
+	"CreateOrder":         "order:create",
+	"GetOrder":            "order:get",
+	"GetBalance":          "balance:get",
+	"ListLedger":          "ledger:list",
 }
 
 // CanonicalGatewayPath builds and validates a registered invocation path.
@@ -199,7 +207,7 @@ func idempotencyRule(method, path string) (required, forbidden bool) {
 		return canonicalMethod != "GET", canonicalMethod == "GET"
 	}
 	if operation := runtimeOperation(path); operation != "" {
-		_, forbidden := runtimeQueryOperations[operation]
+		_, forbidden := runtimeQueryMethods[operation]
 		return false, forbidden
 	}
 	return false, false
@@ -219,8 +227,11 @@ func validateOperationAndMethod(method, path, operation string) error {
 		}
 		return nil
 	}
-	if expectedOperation := runtimeOperation(path); expectedOperation != "" && operation != expectedOperation {
-		return fmt.Errorf("assertion operation does not match runtime method")
+	if methodName := runtimeOperation(path); methodName != "" {
+		expectedOperation, ok := runtimeAssertionOperations[methodName]
+		if !ok || operation != expectedOperation {
+			return fmt.Errorf("assertion operation does not match runtime method")
+		}
 	}
 	return nil
 }

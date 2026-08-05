@@ -154,7 +154,7 @@ func TestQueryAssertionHasEmptyIdempotencyKeyAndFreshNonce(t *testing.T) {
 	}
 	input := assertionInputForTest(t)
 	input.CanonicalPath = "/runtime.v1.RuntimeService/GetBalance"
-	input.Operation = "GetBalance"
+	input.Operation = "balance:get"
 	input.Method = "POST"
 	input.IdempotencyKey = ""
 	first, firstClaims, err := SignAssertion(signer, input)

@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/emiya-dev/musereel-sdk/internal/wire"
+	runtimepb "github.com/emiya-dev/musereel-sdk/runtime"
 	"google.golang.org/grpc"
 )
 
@@ -210,9 +210,9 @@ func (source *CachedTokenSource) Invalidate() {
 	source.mu.Unlock()
 }
 
-// GRPCTokenSource exchanges the empty runtime token request through a grpc
-// connection using the internal protowire codec, then applies CachedTokenSource
-// lifetime and single-flight semantics.
+// GRPCTokenSource exchanges the empty runtime token request through the
+// generated protobuf client message, then applies CachedTokenSource lifetime
+// and single-flight semantics.
 type GRPCTokenSource struct {
 	cache *CachedTokenSource
 }
@@ -236,9 +236,9 @@ func exchangeRuntimeToken(ctx context.Context, connection grpc.ClientConnInterfa
 	if connection == nil {
 		return Token{}, fmt.Errorf("runtime grpc connection is not configured")
 	}
-	request := &wire.ExchangeRuntimeTokenRequest{}
-	reply := &wire.ExchangeRuntimeTokenReply{}
-	if err := connection.Invoke(ctx, runtimeTokenMethod, request, reply, grpc.ForceCodec(wire.Codec{})); err != nil {
+	request := &runtimepb.ExchangeRuntimeTokenRequest{}
+	reply := &runtimepb.ExchangeRuntimeTokenReply{}
+	if err := connection.Invoke(ctx, runtimeTokenMethod, request, reply); err != nil {
 		return Token{}, fmt.Errorf("exchange runtime token: %w", err)
 	}
 	if reply.AccessToken == "" {
@@ -251,8 +251,8 @@ func exchangeRuntimeToken(ctx context.Context, connection grpc.ClientConnInterfa
 		return Token{}, fmt.Errorf("exchange runtime token returned an invalid lifetime")
 	}
 	expiresAt := time.Time{}
-	if reply.ExpiresAtMS != 0 {
-		expiresAt = time.UnixMilli(reply.ExpiresAtMS)
+	if reply.ExpiresAtMs != 0 {
+		expiresAt = time.UnixMilli(reply.ExpiresAtMs)
 	} else if reply.ExpiresInSeconds > 0 {
 		expiresAt = now.Add(time.Duration(reply.ExpiresInSeconds) * time.Second)
 	}
@@ -265,7 +265,7 @@ func exchangeRuntimeToken(ctx context.Context, connection grpc.ClientConnInterfa
 	return Token{
 		accessToken: newSecretString(reply.AccessToken),
 		tokenType:   reply.TokenType,
-		requestID:   reply.RequestID,
+		requestID:   reply.RequestId,
 		expiresAt:   expiresAt,
 	}, nil
 }
