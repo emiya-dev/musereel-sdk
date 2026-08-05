@@ -4,11 +4,10 @@
 instances. This repository is intentionally private until the public-release
 decision is made.
 
-SDK-001 establishes only the Go module baseline and the contract
-synchronization mechanism. It does not contain client, transport, assertion,
-mock, example-business, or generated protobuf code. Authentication and
-transport belong to SDK-002, invocation wrappers to SDK-003, and control-plane
-work to SDK-004.
+SDK-002 adds the authentication and transport foundation: mTLS loading and
+certificate rotation, short-lived runtime-token caching, actor assertions, and
+the generic authenticated gRPC call boundary. Invocation wrappers belong to
+SDK-003, and generated control-plane clients belong to SDK-004.
 
 ## Contract synchronization
 
@@ -32,10 +31,11 @@ The gateway HTTP surface is anchored to frozen chapter `06`, document version
 contract remains owned by Sluice; this SDK baseline records the anchor rather
 than duplicating route implementation or an additional HTTP contract source.
 
-Protobuf code generation is deliberately absent from SDK-001. Generated
-artifacts will be introduced with the SDK-002 toolchain and must be released
-with the matching proto, server implementation, documentation, and contract
-tests.
+The `ExchangeRuntimeToken` call currently uses a narrowly isolated,
+hand-written `protowire` transition codec because this checkout has no
+`protoc`/`buf`. It has golden-byte tests and must be replaced by, or retain
+equivalent assertions with, the SDK-004 generated codegen toolchain. The
+public API does not expose that codec's implementation detail.
 
 Run the complete local baseline with:
 
@@ -69,7 +69,8 @@ implementation.
 - Module: `github.com/emiya-dev/musereel-sdk`
 - Go language version: `1.25`
 - Runtime contract: `runtime.v1`, frozen by `contract-input/SOURCE.txt`
-- External dependencies: none
+- External dependencies: grpc-go v1.80.0, protobuf v1.36.11, and the locked
+  indirect closure recorded in `go.mod`/`go.sum`
 - License: TBD; no license choice has been made by the owner
 - Hosted CI/workflow wiring: TBD; the local shell gate is the only CI shape in
   this milestone
