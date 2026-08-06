@@ -292,7 +292,10 @@ func TestRuntimeClientBufconnContract(t *testing.T) {
 		t.Fatalf("ConfirmRegistration calls = %d, want 1", len(server.confirmRequests))
 	}
 	confirmClaims := verifyRuntimeAssertion(t, signer, server.confirmRequests[0].GetActorAssertion())
-	wantConfirmFingerprint, err := RequestFingerprint("POST", runtimepb.RuntimeService_ConfirmRegistration_FullMethodName, "actor-01", "actor-01", []byte(`{"registration_intent_fingerprint":"intent-fingerprint"}`))
+	// 这里刻意写死 "GRPC" 而不是引用 runtimeAssertionMethod：引用常量会让本断言变成
+	// 实现的镜子，method 换成任何值都能自洽通过——这正是它当初没能抓到 "POST" 的原因。
+	// 写死字面量才能在有人改动那个常量时当场变红。
+	wantConfirmFingerprint, err := RequestFingerprint("GRPC", runtimepb.RuntimeService_ConfirmRegistration_FullMethodName, "actor-01", "actor-01", []byte(`{"registration_intent_fingerprint":"intent-fingerprint"}`))
 	if err != nil {
 		t.Fatalf("RequestFingerprint(confirm): %v", err)
 	}
@@ -315,7 +318,8 @@ func TestRuntimeClientBufconnContract(t *testing.T) {
 	if createClaims.Operation != "order:create" || createClaims.RequestFingerprint != createRetryClaims.RequestFingerprint || createClaims.Nonce == createRetryClaims.Nonce {
 		t.Fatalf("CreateOrder retry claims did not preserve identity and refresh nonce: %#v / %#v", createClaims, createRetryClaims)
 	}
-	wantCreateFingerprint, err := RequestFingerprint("POST", runtimepb.RuntimeService_CreateOrder_FullMethodName, "actor-01", "order-key", []byte(`{"offer_price_id":"offer-price-01"}`))
+	// 同上：写死字面量，不引用常量。
+	wantCreateFingerprint, err := RequestFingerprint("GRPC", runtimepb.RuntimeService_CreateOrder_FullMethodName, "actor-01", "order-key", []byte(`{"offer_price_id":"offer-price-01"}`))
 	if err != nil {
 		t.Fatalf("RequestFingerprint(create): %v", err)
 	}

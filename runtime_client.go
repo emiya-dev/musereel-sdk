@@ -22,6 +22,18 @@ const (
 	RuntimeSubjectUnavailable = "runtime_subject_unavailable"
 	// RuntimeIdentityInactive 是 identity 已停用的稳定错误码。
 	RuntimeIdentityInactive = "identity_inactive"
+
+	// runtimeAssertionMethod 是 gRPC 面 actor assertion 的 method 分量。
+	//
+	// ⚠ 必须是 "GRPC"，不是 "POST"。请求指纹是
+	// base64url(SHA-256(method\npath\nactor\nidem\nJCS(body)))，method 是其中一个分量；
+	// 服务端在 gRPC 面固定用 "GRPC" 参与计算（registration/confirm.go、checkout/handler.go、
+	// querysurface/{balance,ledger}.go 共五处）。这里填 "POST" 会让指纹全盘对不上，
+	// 每一次带断言的 gRPC 调用都被拒 actor_assertion_invalid，且错误里看不出是 method 的锅。
+	//
+	// gRPC 底层确实跑在 HTTP/2 POST 上——这正是当初填 "POST" 的由来。但指纹里的 method
+	// 是**契约面**的标识而不是传输动词，两者不是一回事。
+	runtimeAssertionMethod = "GRPC"
 )
 
 // RuntimeAssertionConfig 保存运行时 actor assertion 的签发上下文。
@@ -419,7 +431,7 @@ func (client *RuntimeClient) invokeAssertion(
 	if client.assertion.Signer == nil {
 		return fmt.Errorf("runtime assertion signer is not configured")
 	}
-	fingerprint, err := RequestFingerprint("POST", method, actor, idempotencyKey, body)
+	fingerprint, err := RequestFingerprint(runtimeAssertionMethod, method, actor, idempotencyKey, body)
 	if err != nil {
 		return err
 	}
@@ -429,7 +441,7 @@ func (client *RuntimeClient) invokeAssertion(
 		SessionID:      client.assertion.SessionID,
 		Actor:          actor,
 		Operation:      operation,
-		Method:         "POST",
+		Method:         runtimeAssertionMethod,
 		CanonicalPath:  method,
 		Body:           body,
 		IdempotencyKey: idempotencyKey,
@@ -451,7 +463,7 @@ func (client *RuntimeClient) invokeAssertion(
 			if identityErr != nil {
 				return "", "", identityErr
 			}
-			currentFingerprint, fingerprintErr := RequestFingerprint("POST", method, currentActor, currentKey, currentBody)
+			currentFingerprint, fingerprintErr := RequestFingerprint(runtimeAssertionMethod, method, currentActor, currentKey, currentBody)
 			if fingerprintErr != nil {
 				return "", "", fingerprintErr
 			}
