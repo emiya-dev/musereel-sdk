@@ -70,8 +70,11 @@ func validGatewayCreateRequest() GatewayCreateRequest {
 	}
 }
 
-func validGatewaySnapshotBody(id, version, state string, terminal bool) []byte {
-	return []byte(fmt.Sprintf(`{"request_id":"req-01","invocation":{"id":%q,"version":%q,"state":%q,"terminal":%t,"sku_id":"sku-video","task_ref":"task-01","created_at_ms":1800000000000,"updated_at_ms":1800000001000,"reserved_units":"5","settled_units":null,"result":null,"error":null,"lot_deductions":null}}`, id, version, state, terminal))
+// validGatewaySnapshotBody 的 version 用 int64 且以 JSON **数字**发出——
+// 必须与真 gateway 的 respond.go（Version int64）一致。此前这里用 %q 发带引号的字符串，
+// SDK 的类型也是 string，两个错误互相吻合，测试因此永远绿而对真服务端一次也解不出来。
+func validGatewaySnapshotBody(id string, version int64, state string, terminal bool) []byte {
+	return []byte(fmt.Sprintf(`{"request_id":"req-01","invocation":{"id":%q,"version":%d,"state":%q,"terminal":%t,"sku_id":"sku-video","task_ref":"task-01","created_at_ms":1800000000000,"updated_at_ms":1800000001000,"reserved_units":"5","settled_units":null,"result":null,"error":null,"lot_deductions":null}}`, id, version, state, terminal))
 }
 
 func writeGatewayJSON(w http.ResponseWriter, status int, body []byte) {
@@ -135,7 +138,7 @@ func TestGatewayCreateAsyncUsesFrozenHeadersAndFingerprint(t *testing.T) {
 				assertion.Subject, request.Header.Get("X-Sluice-Actor"))
 		}
 		w.Header().Set("Location", "/runtime/v1/invocations/inv-01")
-		writeGatewayJSON(w, http.StatusAccepted, validGatewaySnapshotBody("inv-01", "1", string(GatewayStateAccepted), false))
+		writeGatewayJSON(w, http.StatusAccepted, validGatewaySnapshotBody("inv-01", 1, string(GatewayStateAccepted), false))
 	}))
 
 	response, err := client.CreateAsync(context.Background(), validGatewayCreateRequest(), key)
@@ -184,7 +187,7 @@ func TestGateway401RuntimeUnauthenticatedRefreshesOnceWithFreshAssertion(t *test
 		case 2:
 			secondAssertion = request.Header.Get("X-Sluice-Actor-Assertion")
 			w.Header().Set("Location", "/runtime/v1/invocations/inv-01")
-			writeGatewayJSON(w, http.StatusAccepted, validGatewaySnapshotBody("inv-01", "1", string(GatewayStateAccepted), false))
+			writeGatewayJSON(w, http.StatusAccepted, validGatewaySnapshotBody("inv-01", 1, string(GatewayStateAccepted), false))
 		default:
 			t.Fatal("gateway request retried more than once")
 		}
@@ -243,7 +246,7 @@ func TestGatewayGetMaintainsETagAndForbidsIdempotencyKey(t *testing.T) {
 		}
 		w.Header().Set("ETag", `"1"`)
 		w.Header().Set("Retry-After", "1")
-		writeGatewayJSON(w, http.StatusOK, validGatewaySnapshotBody("inv-01", "1", string(GatewayStateRunning), false))
+		writeGatewayJSON(w, http.StatusOK, validGatewaySnapshotBody("inv-01", 1, string(GatewayStateRunning), false))
 	}))
 
 	poller, err := client.NewPoller("inv-01")

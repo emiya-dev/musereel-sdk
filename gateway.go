@@ -98,7 +98,11 @@ func (request GatewayCreateRequest) Validate() error {
 // 保持 raw JSON，SDK 不会把 units 或类似金额的值转成浮点数。
 type GatewayInvocationSnapshot struct {
 	ID            string                 `json:"id"`
-	Version       string                 `json:"version"`
+	// Version 是 int64：服务端 respond.go 与 06 契约示例（"version": 1）都是 JSON 数字。
+	// 这里曾声明成 string，导致 SDK 对真 gateway 的**每一个** snapshot 都解码失败
+	// （async create 202 / GET 200 / cancel 全线折叠为协议错误）——而 SDK 自己的
+	// fixture 用 %q 发带引号的字符串，测试因此反过来认证了这个错误假设。
+	Version       int64                  `json:"version"`
 	State         GatewayInvocationState `json:"state"`
 	Terminal      bool                   `json:"terminal"`
 	SKU           string                 `json:"sku_id"`
@@ -361,7 +365,7 @@ func (client *GatewayClient) GetWithETag(ctx context.Context, invocationID, etag
 		return GatewayGetResponse{}, err
 	}
 	responseETag := response.Header.Get("ETag")
-	if responseETag == "" || responseETag != `"`+snapshot.Version+`"` {
+	if responseETag == "" || responseETag != strconv.Quote(strconv.FormatInt(snapshot.Version, 10)) {
 		return GatewayGetResponse{}, newGatewayProtocolError(response.StatusCode)
 	}
 	return GatewayGetResponse{
@@ -819,7 +823,8 @@ func gatewayJSONContainsNumber(value any) bool {
 func gatewayJSONNull(raw []byte) bool { return bytes.Equal(bytes.TrimSpace(raw), []byte("null")) }
 
 func validateGatewaySnapshot(snapshot *GatewayInvocationSnapshot, requestID string) error {
-	if snapshot == nil || snapshot.ID == "" || snapshot.Version == "" || snapshot.SKU == "" || snapshot.TaskRef == "" {
+	// version 是服务端单调递增的乐观锁版本，从 1 起；<=0 表示字段缺失或被伪造。
+	if snapshot == nil || snapshot.ID == "" || snapshot.Version <= 0 || snapshot.SKU == "" || snapshot.TaskRef == "" {
 		return fmt.Errorf("snapshot identity fields are incomplete")
 	}
 	if !isGatewaySnapshotState(snapshot.State) {
