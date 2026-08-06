@@ -944,8 +944,34 @@ func isGatewayDecimalString(value string) bool {
 	return true
 }
 
+// gatewayJSONValueNonEmpty 判断一个 JSON 值是否携带**实质内容**。
+//
+// ⚠ 空数组 `[]` 与空对象 `{}` 一律算**空**：它们表示「字段在、但没有内容」，
+// 不是「有内容」。原实现只看字节长度与 null，于是 `[]`（长度 2）被判成非空——
+// 而网关对未完成的 invocation 恒发 `"lot_deductions": []`
+// （契约 06 §4.2 的 snapshot 示例即如此）。后果是 validateGatewaySnapshot 命中
+// 「非 completed 不得有 lot_deductions」而拒绝，**SDK 的每一次 async create 都失败在 202 上**，
+// 且错误被折叠成 internal_error，从错误信息里完全看不出真正原因。
 func gatewayJSONValueNonEmpty(raw json.RawMessage) bool {
-	return len(bytes.TrimSpace(raw)) > 0 && !gatewayJSONNull(raw)
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || gatewayJSONNull(raw) {
+		return false
+	}
+	var value any
+	if err := json.Unmarshal(trimmed, &value); err != nil {
+		// 解析不了就当它有内容，交给下游的严格校验去拒绝；不在这里静默放行畸形载荷。
+		return true
+	}
+	switch typed := value.(type) {
+	case nil:
+		return false
+	case []any:
+		return len(typed) > 0
+	case map[string]any:
+		return len(typed) > 0
+	default:
+		return true
+	}
 }
 
 func decodeGatewaySnapshotResponse(response *http.Response) (string, *GatewayInvocationSnapshot, error) {

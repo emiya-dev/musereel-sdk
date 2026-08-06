@@ -70,11 +70,45 @@ func validGatewayCreateRequest() GatewayCreateRequest {
 	}
 }
 
-// validGatewaySnapshotBody 的 version 用 int64 且以 JSON **数字**发出——
-// 必须与真 gateway 的 respond.go（Version int64）一致。此前这里用 %q 发带引号的字符串，
-// SDK 的类型也是 string，两个错误互相吻合，测试因此永远绿而对真服务端一次也解不出来。
+// validGatewaySnapshotBody 必须逐字段复刻真 gateway 的 respond.go 实际发出的形状。
+// 这个 helper 已经栽过两次，都是同一类：**夹具锚在想象上而不是实物上**，
+// SDK 的实现与夹具的虚构互相吻合，测试于是永远绿，对真服务端却一次也过不去。
+//
+//  1. version：此前这里用 %q 发带引号的字符串，SDK 的类型也是 string，两个错误互相吻合。
+//     真 gateway 是 int64、以 JSON 数字发出。
+//  2. lot_deductions：此前这里发 null，而真 gateway 发的是**空数组 []**
+//     （respond.go 用 make([]lotDeduction, len(...)) 构造，零长度也序列化成 []；
+//     契约 06 §4.2 的 snapshot 示例同样是 []）。SDK 的 gatewayJSONValueNonEmpty
+//     把 [] 判成「非空」，于是每一次 async create 都被判「非 completed 不得有
+//     lot_deductions」而拒绝——由接入彩排的 golden 腿在真服务端上抓出。
+//
+// 改这个 helper 前先去 respond.go 对一遍实际字段与类型，不要凭印象写。
 func validGatewaySnapshotBody(id string, version int64, state string, terminal bool) []byte {
-	return []byte(fmt.Sprintf(`{"request_id":"req-01","invocation":{"id":%q,"version":%d,"state":%q,"terminal":%t,"sku_id":"sku-video","task_ref":"task-01","created_at_ms":1800000000000,"updated_at_ms":1800000001000,"reserved_units":"5","settled_units":null,"result":null,"error":null,"lot_deductions":null}}`, id, version, state, terminal))
+	return []byte(fmt.Sprintf(`{"request_id":"req-01","invocation":{"id":%q,"version":%d,"state":%q,"terminal":%t,"sku_id":"sku-video","task_ref":"task-01","created_at_ms":1800000000000,"updated_at_ms":1800000001000,"reserved_units":"5","settled_units":null,"result":null,"error":null,"lot_deductions":[]}}`, id, version, state, terminal))
+}
+
+// TestGatewayJSONValueEmptinessMatchesWireShapes 钉死「空」的判据：
+// 空数组与空对象是「字段在、没内容」，必须算空；有元素才算非空。
+// 负对照：把 gatewayJSONValueNonEmpty 改回只看字节长度与 null，前三行当场变红。
+func TestGatewayJSONValueEmptinessMatchesWireShapes(t *testing.T) {
+	for _, testCase := range []struct {
+		raw  string
+		want bool
+	}{
+		{`[]`, false},
+		{`{}`, false},
+		{` [ ] `, false},
+		{`null`, false},
+		{``, false},
+		{`[{"lot_id":"lot_01","units":"33"}]`, true},
+		{`{"artifacts":[]}`, true},
+		{`"text"`, true},
+		{`0`, true},
+	} {
+		if got := gatewayJSONValueNonEmpty([]byte(testCase.raw)); got != testCase.want {
+			t.Errorf("gatewayJSONValueNonEmpty(%q) = %t, want %t", testCase.raw, got, testCase.want)
+		}
+	}
 }
 
 func writeGatewayJSON(w http.ResponseWriter, status int, body []byte) {
