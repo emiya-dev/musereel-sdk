@@ -20,7 +20,12 @@ import (
 )
 
 const (
-	assertionSubject    = "X-Sluice-Actor"
+	// ⚠ 这里曾有一个 assertionSubject = "X-Sluice-Actor" 常量，把 06 契约的
+	// 「`sub` 必须等于 `X-Sluice-Actor`」读成了「等于这个字符串」——契约指的是该请求头
+	// 携带的 **actor 值**。后果是 SDK 签出的每一份 assertion 都会被服务端
+	// `claims.Subject != request.Actor` 拒为 actor_assertion_invalid，
+	// 即除非 actor 恰好叫 "X-Sluice-Actor"，SDK 对真 sluice 一次也走不通。
+	// sub 现在恒取 AssertionInput.Actor；validateClaims 也不再比对固定字面量。
 	assertionAudience   = "sluice-runtime"
 	defaultAssertionTTL = 60 * time.Second
 	nonceBytes          = 16
@@ -315,7 +320,7 @@ func SignAssertion(signer Signer, input AssertionInput) (JWS, AssertionClaims, e
 	}
 	claims := AssertionClaims{
 		Issuer:             input.InstanceID,
-		Subject:            assertionSubject,
+		Subject:            input.Actor,
 		Audience:           assertionAudience,
 		TenantID:           input.TenantID,
 		SessionID:          input.SessionID,
@@ -456,7 +461,10 @@ func verifySignature(algorithm string, publicKey crypto.PublicKey, message, sign
 }
 
 func validateClaims(claims AssertionClaims) error {
-	if claims.Issuer == "" || claims.Subject != assertionSubject || claims.Audience != assertionAudience ||
+	// sub 是 actor 值，只能校验非空——它与本次请求 actor 的一致性由服务端裁决
+	// （instanceauth/assertion.go 的 claims.Subject != request.Actor），
+	// SDK 侧再比对一次固定字面量正是原先那个缺陷。
+	if claims.Issuer == "" || claims.Subject == "" || claims.Audience != assertionAudience ||
 		claims.TenantID == "" || claims.SessionID == "" || claims.Operation == "" ||
 		claims.RequestFingerprint == "" || claims.IssuedAt <= 0 || claims.ExpiresAt <= claims.IssuedAt ||
 		claims.ExpiresAt-claims.IssuedAt > 60 {

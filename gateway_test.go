@@ -126,6 +126,14 @@ func TestGatewayCreateAsyncUsesFrozenHeadersAndFingerprint(t *testing.T) {
 		if assertion.RequestFingerprint != fingerprint || assertion.Operation != string(GatewayInvocationCreate) {
 			t.Fatalf("assertion claims = %#v, fingerprint = %q", assertion, fingerprint)
 		}
+		// sub 必须等于 X-Sluice-Actor 携带的 actor 值（06 契约 claim 表；服务端
+		// instanceauth/assertion.go 比对 claims.Subject != request.Actor）。
+		// 这条断言此前缺失——本测试同时看得见 header 与 claims 却从不交叉核对，
+		// 于是把「sub 恒等于 header 名字」这个缺陷认证成了正确行为。
+		if assertion.Subject != request.Header.Get("X-Sluice-Actor") {
+			t.Fatalf("assertion sub = %q, want the actor header value %q",
+				assertion.Subject, request.Header.Get("X-Sluice-Actor"))
+		}
 		w.Header().Set("Location", "/runtime/v1/invocations/inv-01")
 		writeGatewayJSON(w, http.StatusAccepted, validGatewaySnapshotBody("inv-01", "1", string(GatewayStateAccepted), false))
 	}))

@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
+	"unicode/utf16"
 	"unicode/utf8"
 )
 
@@ -221,7 +222,7 @@ func writeJCS(builder *strings.Builder, value any) error {
 			}
 			keys = append(keys, key)
 		}
-		sort.Strings(keys)
+		sortJCSKeys(keys)
 		builder.WriteByte('{')
 		for index, key := range keys {
 			if index > 0 {
@@ -267,6 +268,31 @@ func writeJCSString(builder *strings.Builder, value string) {
 		}
 	}
 	builder.WriteByte('"')
+}
+
+// sortJCSKeys orders object property names by UTF-16 code units as RFC 8785
+// requires. Go's sort.Strings compares UTF-8 bytes, which disagrees on
+// non-BMP characters: U+10000 is the surrogate pair D800 DC00 and therefore
+// sorts before U+E000 by code unit, while its UTF-8 bytes sort after. Property
+// names may be any non-control character and gateway `parameters` is a
+// pass-through object, so the divergence is reachable and would surface as an
+// unexplained actor_assertion_invalid caused by a mismatched fingerprint.
+func sortJCSKeys(keys []string) {
+	sort.Slice(keys, func(left, right int) bool {
+		return lessUTF16(keys[left], keys[right])
+	})
+}
+
+// lessUTF16 compares two strings by UTF-16 code units, the RFC 8785 §3.2.3 order.
+func lessUTF16(left, right string) bool {
+	leftUnits := utf16.Encode([]rune(left))
+	rightUnits := utf16.Encode([]rune(right))
+	for index := 0; index < len(leftUnits) && index < len(rightUnits); index++ {
+		if leftUnits[index] != rightUnits[index] {
+			return leftUnits[index] < rightUnits[index]
+		}
+	}
+	return len(leftUnits) < len(rightUnits)
 }
 
 func validateJCSKey(key string) error {
