@@ -177,13 +177,111 @@ func (connection *fakeConn) Invoke(ctx context.Context, _ string, args, _ any, _
 	}
 	connection.requests = append(connection.requests, args)
 	if connection.calls == 1 {
-		return status.Error(codes.Unauthenticated, RuntimeUnauthenticated)
+		return runtimeUnauthenticatedStatus()
 	}
 	return nil
 }
 
 func (connection *fakeConn) NewStream(context.Context, *grpc.StreamDesc, string, ...grpc.CallOption) (grpc.ClientStream, error) {
 	return nil, errors.New("not implemented")
+}
+
+type authenticatedRetryBufconnServer struct {
+	runtimepb.UnimplementedRuntimeServiceServer
+
+	mu            sync.Mutex
+	calls         int
+	authorization []string
+}
+
+func (server *authenticatedRetryBufconnServer) begin(ctx context.Context) bool {
+	authorization := ""
+	if values, ok := metadata.FromIncomingContext(ctx); ok {
+		if headers := values.Get("authorization"); len(headers) > 0 {
+			authorization = headers[0]
+		}
+	}
+	server.mu.Lock()
+	defer server.mu.Unlock()
+	server.calls++
+	server.authorization = append(server.authorization, authorization)
+	return server.calls == 1
+}
+
+func (server *authenticatedRetryBufconnServer) GetOrder(ctx context.Context, request *runtimepb.GetOrderRequest) (*runtimepb.GetOrderReply, error) {
+	if server.begin(ctx) {
+		return nil, runtimeUnauthenticatedStatus()
+	}
+	return &runtimepb.GetOrderReply{Order: &runtimepb.Order{Id: request.GetOrderId()}}, nil
+}
+
+func (server *authenticatedRetryBufconnServer) GetBalance(ctx context.Context, _ *runtimepb.GetBalanceRequest) (*runtimepb.BalanceReply, error) {
+	if server.begin(ctx) {
+		return nil, runtimeUnauthenticatedStatus()
+	}
+	return &runtimepb.BalanceReply{AvailableUnits: "0001.0000"}, nil
+}
+
+func TestAuthenticatedInvokeRefreshesOnRuntimeDetailsOverBufconn(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	tokens, exchanges := runtimeTestTokens(now)
+	server := &authenticatedRetryBufconnServer{}
+	client := NewAuthenticatedClient(newRuntimeBufconn(t, server), tokens)
+	reply := new(runtimepb.GetOrderReply)
+
+	err := client.Invoke(
+		context.Background(),
+		runtimepb.RuntimeService_GetOrder_FullMethodName,
+		&runtimepb.GetOrderRequest{OrderId: "order-01"},
+		reply,
+	)
+	if err != nil {
+		t.Fatalf("AuthenticatedClient.Invoke: %v", err)
+	}
+	if reply.GetOrder().GetId() != "order-01" {
+		t.Fatalf("reply order id = %q, want order-01", reply.GetOrder().GetId())
+	}
+	server.mu.Lock()
+	calls := server.calls
+	authorization := append([]string(nil), server.authorization...)
+	server.mu.Unlock()
+	if calls != 2 || exchanges.Load() != 2 || len(authorization) != 2 || authorization[0] == authorization[1] {
+		t.Fatalf("refresh evidence: server_calls=%d token_exchanges=%d authorization=%#v", calls, exchanges.Load(), authorization)
+	}
+	t.Logf("refresh trigger: server_calls=%d token_exchanges=%d authorization_rotated=%t", calls, exchanges.Load(), authorization[0] != authorization[1])
+}
+
+func TestAuthenticatedInvokeWithAssertionRefreshesOnRuntimeDetailsOverBufconn(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	tokens, exchanges := runtimeTestTokens(now)
+	server := &authenticatedRetryBufconnServer{}
+	client := NewAuthenticatedClient(newRuntimeBufconn(t, server), tokens)
+	reply := new(runtimepb.BalanceReply)
+
+	err := client.InvokeWithAssertion(
+		context.Background(),
+		runtimepb.RuntimeService_GetBalance_FullMethodName,
+		AssertionCall{
+			Args:           &runtimepb.GetBalanceRequest{Actor: "actor-01"},
+			Sign:           func(Token) (JWS, error) { return JWS{}, nil },
+			ApplyAssertion: func(any, JWS) error { return nil },
+		},
+		reply,
+	)
+	if err != nil {
+		t.Fatalf("AuthenticatedClient.InvokeWithAssertion: %v", err)
+	}
+	if reply.GetAvailableUnits() != "0001.0000" {
+		t.Fatalf("available units = %q, want 0001.0000", reply.GetAvailableUnits())
+	}
+	server.mu.Lock()
+	calls := server.calls
+	authorization := append([]string(nil), server.authorization...)
+	server.mu.Unlock()
+	if calls != 2 || exchanges.Load() != 2 || len(authorization) != 2 || authorization[0] == authorization[1] {
+		t.Fatalf("refresh evidence: server_calls=%d token_exchanges=%d authorization=%#v", calls, exchanges.Load(), authorization)
+	}
+	t.Logf("refresh trigger: server_calls=%d token_exchanges=%d authorization_rotated=%t", calls, exchanges.Load(), authorization[0] != authorization[1])
 }
 
 type assertionTestRequest struct {
