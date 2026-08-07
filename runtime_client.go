@@ -576,9 +576,21 @@ func normalizeRuntimeError(err error) error {
 	return &RuntimeRPCError{
 		cause:      err,
 		stableCode: code,
-		retryable:  code == RuntimeRegistrationUnavailable,
+		retryable:  runtimeRetryable(err, code),
 		statusCode: runtimeStatusCode(code, status.Code(err)),
 	}
+}
+
+func runtimeRetryable(err error, code string) bool {
+	if info, ok := runtimeErrorInfo(err); ok {
+		switch info.Metadata["retryable"] {
+		case "true":
+			return true
+		case "false":
+			return false
+		}
+	}
+	return code == RuntimeRegistrationUnavailable
 }
 
 func stableRuntimeCodeFromMessage(message string) string {

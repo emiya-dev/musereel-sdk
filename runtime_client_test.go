@@ -12,6 +12,7 @@ import (
 	"time"
 
 	runtimepb "github.com/emiya-dev/musereel-sdk/runtime"
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
@@ -33,6 +34,33 @@ type runtimeBufconnServer struct {
 	ledgerAssertions  [][]byte
 	ledgerPageCursors []string
 	ledgerPageSizes   []int32
+}
+
+const (
+	testRuntimeErrorDomain        = "sluice.runtime"
+	testRuntimeUnauthenticatedMsg = "运行时请求未通过实例与操作者认证"
+)
+
+func runtimeErrorStatus(grpcCode codes.Code, message, reason, domain string, metadata map[string]string) error {
+	result, err := status.New(grpcCode, message).WithDetails(&errdetails.ErrorInfo{
+		Reason:   reason,
+		Domain:   domain,
+		Metadata: metadata,
+	})
+	if err != nil {
+		panic(err)
+	}
+	return result.Err()
+}
+
+func runtimeUnauthenticatedStatus() error {
+	return runtimeErrorStatus(
+		codes.Unauthenticated,
+		testRuntimeUnauthenticatedMsg,
+		RuntimeUnauthenticated,
+		testRuntimeErrorDomain,
+		map[string]string{"retryable": "false"},
+	)
 }
 
 func newRuntimeBufconnServer() *runtimeBufconnServer {
@@ -108,7 +136,7 @@ func (server *runtimeBufconnServer) CreateOrder(_ context.Context, request *runt
 	})
 	server.mu.Unlock()
 	if server.begin("CreateOrder") {
-		return nil, status.Error(codes.Unauthenticated, RuntimeUnauthenticated)
+		return nil, runtimeUnauthenticatedStatus()
 	}
 	return &runtimepb.CreateOrderReply{
 		RequestId: "order-request", OrderId: "order-01", PayableAmount: "00012.3400", Currency: "USD", Status: "pending",
@@ -158,7 +186,7 @@ func (server *runtimeBufconnServer) GetBalance(_ context.Context, request *runti
 	server.balanceAssertions = append(server.balanceAssertions, append([]byte(nil), request.GetActorAssertion()...))
 	server.mu.Unlock()
 	if server.begin("GetBalance") {
-		return nil, status.Error(codes.Unauthenticated, RuntimeUnauthenticated)
+		return nil, runtimeUnauthenticatedStatus()
 	}
 	return &runtimepb.BalanceReply{PostedUnits: "00010.0000", HeldUnits: "0001.2500", AvailableUnits: "0008.7500", PaidAvailableUnits: "0008.0000", FreeAvailableUnits: "0000.7500"}, nil
 }
@@ -170,7 +198,7 @@ func (server *runtimeBufconnServer) ListLedger(_ context.Context, request *runti
 	server.ledgerPageSizes = append(server.ledgerPageSizes, request.GetPageSize())
 	server.mu.Unlock()
 	if server.begin("ListLedger") {
-		return nil, status.Error(codes.Unauthenticated, RuntimeUnauthenticated)
+		return nil, runtimeUnauthenticatedStatus()
 	}
 	return &runtimepb.LedgerReply{Entries: []*runtimepb.LedgerItem{{EntryId: "entry-01", Units: "0000.5000"}}, NextPageCursor: "next-opaque"}, nil
 }
@@ -189,7 +217,18 @@ func (server *runtimeBufconnServer) GetOfferCatalog(context.Context, *runtimepb.
 	}, nil
 }
 
-func newRuntimeBufconn(t *testing.T, serverImpl *runtimeBufconnServer) *grpc.ClientConn {
+type runtimeErrorBufconnServer struct {
+	runtimepb.UnimplementedRuntimeServiceServer
+	err   error
+	calls atomic.Int32
+}
+
+func (server *runtimeErrorBufconnServer) ResolveRegistration(context.Context, *runtimepb.ResolveRegistrationRequest) (*runtimepb.RegistrationIntent, error) {
+	server.calls.Add(1)
+	return nil, server.err
+}
+
+func newRuntimeBufconn(t *testing.T, serverImpl runtimepb.RuntimeServiceServer) *grpc.ClientConn {
 	t.Helper()
 	listener := bufconn.Listen(1024 * 1024)
 	server := grpc.NewServer()
@@ -350,6 +389,103 @@ func TestRuntimeClientBufconnContract(t *testing.T) {
 	}
 	if exchanges.Load() != 4 {
 		t.Fatalf("token exchanges = %d, want initial plus three refreshes", exchanges.Load())
+	}
+}
+
+func TestRuntimeErrorInfoRoundTripsThroughBufconn(t *testing.T) {
+	const stableCode = "invocation_idempotency_conflict"
+	server := &runtimeErrorBufconnServer{
+		err: runtimeErrorStatus(codes.Aborted, "调用幂等键与既有请求冲突", stableCode, testRuntimeErrorDomain, map[string]string{}),
+	}
+	client := NewRuntimeClient(newRuntimeBufconn(t, server), nil)
+
+	_, err := client.ResolveRegistration(context.Background(), &runtimepb.ResolveRegistrationRequest{})
+	if err == nil {
+		t.Fatal("ResolveRegistration unexpectedly succeeded")
+	}
+	if got := ErrorCode(err); got != stableCode {
+		t.Fatalf("ErrorCode = %q, want %q; err=%v", got, stableCode, err)
+	}
+	if status.Code(err) != codes.Aborted {
+		t.Fatalf("status.Code = %s, want %s", status.Code(err), codes.Aborted)
+	}
+	if server.calls.Load() != 1 {
+		t.Fatalf("server calls = %d, want 1", server.calls.Load())
+	}
+}
+
+func TestRuntimeAbortedDetailsRemainDistinct(t *testing.T) {
+	testCases := []string{
+		"invocation_idempotency_conflict",
+		"payment_idempotency_conflict",
+		"insufficient_quota",
+	}
+	for _, stableCode := range testCases {
+		t.Run(stableCode, func(t *testing.T) {
+			server := &runtimeErrorBufconnServer{
+				err: runtimeErrorStatus(codes.Aborted, "业务请求被拒绝", stableCode, testRuntimeErrorDomain, map[string]string{}),
+			}
+			client := NewRuntimeClient(newRuntimeBufconn(t, server), nil)
+
+			_, err := client.ResolveRegistration(context.Background(), &runtimepb.ResolveRegistrationRequest{})
+			if err == nil {
+				t.Fatal("ResolveRegistration unexpectedly succeeded")
+			}
+			if got := ErrorCode(err); got != stableCode {
+				t.Fatalf("ErrorCode = %q, want fixture code %q", got, stableCode)
+			}
+			if status.Code(err) != codes.Aborted {
+				t.Fatalf("status.Code = %s, want %s", status.Code(err), codes.Aborted)
+			}
+		})
+	}
+}
+
+func TestRuntimeRetryableMetadataHasThreeStates(t *testing.T) {
+	testCases := []struct {
+		name       string
+		stableCode string
+		grpcCode   codes.Code
+		metadata   map[string]string
+		want       bool
+	}{
+		{name: "explicit true", stableCode: "internal_error", grpcCode: codes.Internal, metadata: map[string]string{"retryable": "true"}, want: true},
+		{name: "explicit false", stableCode: "runtime_forbidden", grpcCode: codes.PermissionDenied, metadata: map[string]string{"retryable": "false"}, want: false},
+		{name: "unflagged insufficient quota", stableCode: "insufficient_quota", grpcCode: codes.Aborted, metadata: map[string]string{}, want: false},
+		{name: "missing flag uses sdk fallback", stableCode: RuntimeRegistrationUnavailable, grpcCode: codes.Unavailable, metadata: map[string]string{}, want: true},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			server := &runtimeErrorBufconnServer{
+				err: runtimeErrorStatus(testCase.grpcCode, "业务错误", testCase.stableCode, testRuntimeErrorDomain, testCase.metadata),
+			}
+			client := NewRuntimeClient(newRuntimeBufconn(t, server), nil)
+
+			_, err := client.ResolveRegistration(context.Background(), &runtimepb.ResolveRegistrationRequest{})
+			if err == nil {
+				t.Fatal("ResolveRegistration unexpectedly succeeded")
+			}
+			retryable, ok := err.(interface{ Retryable() bool })
+			if !ok {
+				t.Fatalf("error type %T does not expose Retryable", err)
+			}
+			if got := retryable.Retryable(); got != testCase.want {
+				t.Fatalf("Retryable = %t, want %t for metadata=%#v", got, testCase.want, testCase.metadata)
+			}
+		})
+	}
+}
+
+func TestErrorCodeIgnoresForeignErrorInfoDomain(t *testing.T) {
+	err := runtimeErrorStatus(
+		codes.Unauthenticated,
+		testRuntimeUnauthenticatedMsg,
+		RuntimeUnauthenticated,
+		"other.service",
+		map[string]string{"retryable": "false"},
+	)
+	if got := ErrorCode(err); got != "" {
+		t.Fatalf("foreign ErrorInfo domain produced code %q", got)
 	}
 }
 
@@ -542,20 +678,54 @@ func (connection *runtimeErrorConn) NewStream(context.Context, *grpc.StreamDesc,
 }
 
 func TestRuntimeStableErrorMappingDoesNotAddRetry(t *testing.T) {
-	connection := &runtimeErrorConn{err: status.Error(codes.Unknown, RuntimeRegistrationUnavailable+": temporarily unavailable")}
-	client := NewRuntimeClient(connection, nil)
-	_, err := client.ResolveRegistration(context.Background(), &runtimepb.ResolveRegistrationRequest{})
-	if err == nil {
-		t.Fatal("ResolveRegistration unexpectedly succeeded")
+	testCases := []struct {
+		name    string
+		err     error
+		rawCode string
+	}{
+		{
+			name:    "ErrorInfo details",
+			rawCode: RuntimeRegistrationUnavailable,
+			err: runtimeErrorStatus(
+				codes.Unknown,
+				"服务暂时不可用",
+				RuntimeRegistrationUnavailable,
+				testRuntimeErrorDomain,
+				map[string]string{"retryable": "true"},
+			),
+		},
+		{
+			name: "legacy message prefix",
+			err:  status.Error(codes.Unknown, RuntimeRegistrationUnavailable+": temporarily unavailable"),
+		},
 	}
-	if ErrorCode(err) != RuntimeRegistrationUnavailable || status.Code(err) != codes.Unavailable {
-		t.Fatalf("stable error = %v, code=%q grpc=%s", err, ErrorCode(err), status.Code(err))
+	legacyAuthentication := status.Error(codes.Unauthenticated, RuntimeUnauthenticated+": legacy compatibility")
+	if got := ErrorCode(legacyAuthentication); got != RuntimeUnauthenticated {
+		t.Fatalf("legacy auth ErrorCode = %q, want %q", got, RuntimeUnauthenticated)
 	}
-	retryable, ok := err.(interface{ Retryable() bool })
-	if !ok || !retryable.Retryable() {
-		t.Fatalf("registration_unavailable retryable = %#v, want true", err)
-	}
-	if connection.calls.Load() != 1 {
-		t.Fatalf("ResolveRegistration calls = %d, want no SDK retry", connection.calls.Load())
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			if testCase.rawCode != "" {
+				if got := ErrorCode(testCase.err); got != testCase.rawCode {
+					t.Fatalf("raw ErrorCode = %q, want %q", got, testCase.rawCode)
+				}
+			}
+			connection := &runtimeErrorConn{err: testCase.err}
+			client := NewRuntimeClient(connection, nil)
+			_, err := client.ResolveRegistration(context.Background(), &runtimepb.ResolveRegistrationRequest{})
+			if err == nil {
+				t.Fatal("ResolveRegistration unexpectedly succeeded")
+			}
+			if ErrorCode(err) != RuntimeRegistrationUnavailable || status.Code(err) != codes.Unavailable {
+				t.Fatalf("stable error = %v, code=%q grpc=%s", err, ErrorCode(err), status.Code(err))
+			}
+			retryable, ok := err.(interface{ Retryable() bool })
+			if !ok || !retryable.Retryable() {
+				t.Fatalf("registration_unavailable retryable = %#v, want true", err)
+			}
+			if connection.calls.Load() != 1 {
+				t.Fatalf("ResolveRegistration calls = %d, want no SDK retry", connection.calls.Load())
+			}
+		})
 	}
 }

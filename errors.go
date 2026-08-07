@@ -4,8 +4,11 @@ import (
 	"errors"
 	"strings"
 
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc/status"
 )
+
+const runtimeErrorDomain = "sluice.runtime"
 
 // Stable runtime error codes frozen by the SDK-002 contract. Branches in the
 // SDK use these codes, not unstable human-readable status text or transport
@@ -30,7 +33,12 @@ func ErrorCode(err error) string {
 	}
 	var provider ErrorCodeProvider
 	if errors.As(err, &provider) {
-		return provider.ErrorCode()
+		if code := provider.ErrorCode(); code != "" {
+			return code
+		}
+	}
+	if info, ok := runtimeErrorInfo(err); ok && info.Reason != "" {
+		return info.Reason
 	}
 	message := status.Convert(err).Message()
 	for _, code := range []string{
@@ -43,6 +51,20 @@ func ErrorCode(err error) string {
 		}
 	}
 	return ""
+}
+
+func runtimeErrorInfo(err error) (*errdetails.ErrorInfo, bool) {
+	if err == nil {
+		return nil, false
+	}
+	for _, detail := range status.Convert(err).Details() {
+		info, ok := detail.(*errdetails.ErrorInfo)
+		if !ok || info == nil || info.Domain != runtimeErrorDomain {
+			continue
+		}
+		return info, true
+	}
+	return nil, false
 }
 
 // IsRuntimeUnauthenticated reports only the stable runtime code. A generic

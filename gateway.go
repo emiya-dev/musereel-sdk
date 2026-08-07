@@ -97,7 +97,7 @@ func (request GatewayCreateRequest) Validate() error {
 // GatewayInvocationSnapshot 由 async create、GET、cancel 共用。Result 和 LotDeductions
 // 保持 raw JSON，SDK 不会把 units 或类似金额的值转成浮点数。
 type GatewayInvocationSnapshot struct {
-	ID            string                 `json:"id"`
+	ID string `json:"id"`
 	// Version 是 int64：服务端 respond.go 与 06 契约示例（"version": 1）都是 JSON 数字。
 	// 这里曾声明成 string，导致 SDK 对真 gateway 的**每一个** snapshot 都解码失败
 	// （async create 202 / GET 200 / cancel 全线折叠为协议错误）——而 SDK 自己的
