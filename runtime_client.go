@@ -68,17 +68,18 @@ func WithRuntimeAssertion(signer Signer, instanceID, tenantID, sessionID string)
 
 // RuntimeClient 是 runtime.v1.RuntimeService 的类型化控制面封装。
 // ExchangeRuntimeToken 不在此 client 中：它由 GRPCTokenSource 通过 mTLS
-// bootstrap 承载。ResolveRegistration 也是公有路径，因此不附加 Bearer；
-// 其余无 assertion 的 RPC 仍通过 AuthenticatedClient 发送 Bearer 并保留
-// SDK-002 的一次稳定未认证刷新重试。
+// bootstrap 承载。ResolveRegistration 是**唯一的双路径 RPC**，是否附加 Bearer
+// 由请求本身决定，见该方法的注释；其余无 assertion 的 RPC 一律通过
+// AuthenticatedClient 发送 Bearer 并保留 SDK-002 的一次稳定未认证刷新重试。
 type RuntimeClient struct {
 	connection    grpc.ClientConnInterface
 	authenticated *AuthenticatedClient
 	assertion     RuntimeAssertionConfig
 }
 
-// NewRuntimeClient 构造 runtime 控制面 client。tokens 仅用于需要 Bearer
-// 的 RPC；ResolveRegistration 不读取 TokenSource。
+// NewRuntimeClient 构造 runtime 控制面 client。tokens 用于需要 Bearer 的 RPC；
+// ResolveRegistration 只在走 dedicated 路径时才读取它，公有路径不读。
+// tokens 为 nil 的 client 仍可用公有路径注册。
 func NewRuntimeClient(connection grpc.ClientConnInterface, tokens TokenSource, options ...RuntimeClientOption) *RuntimeClient {
 	client := &RuntimeClient{
 		connection:    connection,
@@ -141,8 +142,26 @@ func (err *RuntimeRPCError) GRPCStatus() *status.Status {
 	return status.New(err.statusCode, message)
 }
 
-// ResolveRegistration 走公有 runtime 路径，不附加 Bearer。registration_unavailable
-// 的服务端响应应在外部 2 秒总预算内最多重试一次；SDK 不内建该重试。
+// ResolveRegistration 是唯一的双路径 RPC，两条路在服务端**互斥**：
+//
+//   - 公有（SaaS 共享）：请求带 site context token，**不附加 Bearer**。
+//     服务端要求 site token 存在**且** scope 为零。
+//   - dedicated（私有部署实例）：请求**不带** site token，**必须附加 Bearer**。
+//     服务端从实例短期 token 解出 scope，并要求 deployment_scope 是 dedicated。
+//
+// 因此判据是**请求里有没有 site token**，而不是"这个 client 手上有没有实例凭据"。
+// 两个都给会让服务端同时看到 site token 与非零 scope，落进兜底分支被拒——
+// 所以持有实例凭据的调用方走公有路径时同样不能附加 Bearer。
+//
+// ⚠ 本方法此前把「不附加 Bearer」写死，于是 dedicated 那条路经它**根本走不到**：
+// 请求既没有 site token、scope 又是零，服务端只能判成 invalid_registration。
+// 服务端两条路一直都在，缺的一直是这一侧。
+//
+// tokens 为 nil 时不会自作主张——那种 client 只能走公有路径，
+// 请求缺 site token 就由服务端 fail-loud，SDK 不替它编一个本地错误。
+//
+// registration_unavailable 的服务端响应应在外部 2 秒总预算内最多重试一次；
+// SDK 不内建该重试。
 func (client *RuntimeClient) ResolveRegistration(ctx context.Context, request *runtimepb.ResolveRegistrationRequest, options ...grpc.CallOption) (*runtimepb.RegistrationIntent, error) {
 	if request == nil {
 		return nil, fmt.Errorf("resolve registration request is nil")
@@ -153,8 +172,12 @@ func (client *RuntimeClient) ResolveRegistration(ctx context.Context, request *r
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	invoke := client.connection.Invoke
+	if request.GetSiteContextToken() == "" && client.authenticated != nil && client.authenticated.tokens != nil {
+		invoke = client.authenticated.Invoke
+	}
 	reply := new(runtimepb.RegistrationIntent)
-	if err := client.connection.Invoke(ctx, runtimepb.RuntimeService_ResolveRegistration_FullMethodName, request, reply, options...); err != nil {
+	if err := invoke(ctx, runtimepb.RuntimeService_ResolveRegistration_FullMethodName, request, reply, options...); err != nil {
 		return nil, normalizeRuntimeError(err)
 	}
 	return reply, nil
