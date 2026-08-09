@@ -284,8 +284,13 @@ message TokenTieredPrice {
 }
 
 message PerImageTier {
+  // resolution 与 quality 是**两个维度**，不要把复合价格键塞进 resolution。
+  // 目录内部的价格键是 `<resolution>@<quality>`；对外必须拆开，
+  // 否则调用方得自己按 '@' 拆一个没写进契约的约定。
+  // quality 为空表示该 SKU 没有档位维度。
   string resolution = 1;
   string units_per_image = 2;
+  string quality = 3;
 }
 
 message PerImagePrice {
@@ -293,8 +298,10 @@ message PerImagePrice {
 }
 
 message PerSecondTier {
+  // 同 PerImageTier：resolution 与 quality 是两个维度，quality 为空表示无档位。
   string resolution = 1;
   string units_per_second = 2;
+  string quality = 3;
 }
 
 message PerSecondPrice {
