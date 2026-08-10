@@ -121,7 +121,12 @@ var negativeSurfaceAllow = map[string]string{
 	"runtime/runtime.pb.go::literal:/runtime.v1.RuntimeService/GetBalance":                   "冻结只读 protobuf RPC 路径 literal",
 }
 
-// negativeSurfaceMutationWords 是 balance mutation 的第二段词表。
+// negativeSurfaceLedgerWords 是账本相关名词的第一段词表。
+var negativeSurfaceLedgerWords = []string{
+	"balance", "ledger", "unit", "quota", "credit", "debit",
+}
+
+// negativeSurfaceMutationWords 是账本 mutation 的第二段词表。
 var negativeSurfaceMutationWords = []string{
 	"set", "write", "update", "adjust", "mutat", "credit", "debit",
 	"increment", "decrement", "apply", "consume", "deduct", "add", "remove",
@@ -390,7 +395,7 @@ func classifyNegativeSurface(name, kind string) (negativeSurfaceCategory, bool) 
 		return negativeCostPlane, true
 	}
 	if strings.Contains(lower, "reserve") || strings.Contains(lower, "settle") || strings.Contains(lower, "grant") ||
-		(strings.Contains(lower, "balance") && (lower == "balance" || containsAny(lower, negativeSurfaceMutationWords))) {
+		(containsAny(lower, negativeSurfaceLedgerWords) && containsAny(lower, negativeSurfaceMutationWords)) {
 		return negativeLedgerMutation, true
 	}
 	if strings.Contains(lower, "free") || strings.Contains(lower, "complimentary") {
@@ -505,6 +510,50 @@ func TestNegativeSurfaceGuardSixTemporaryNegativeControls(t *testing.T) {
 	}
 }
 
+func TestNegativeSurfaceGuardLedgerNounMutationControls(t *testing.T) {
+	directory := t.TempDir()
+	path := filepath.Join(directory, "synthetic_ledger_surface.go")
+	source := `package sample
+type Client struct{}
+func (Client) DeductUnits() {}
+type LedgerWriter struct { UpdateQuota bool }
+func (Client) AddHeader() {}
+func (Client) SetTimeout() {}
+`
+	if err := os.WriteFile(path, []byte(source), 0o600); err != nil {
+		t.Fatalf("写入临时账本样本失败: %v", err)
+	}
+
+	redHits, err := scanSDKNonTestGo(directory)
+	if err != nil {
+		t.Fatalf("扫描临时账本样本失败: %v", err)
+	}
+	for _, name := range []string{"DeductUnits", "LedgerWriter", "UpdateQuota"} {
+		if !hasNegativeSurfaceName(redHits, name) {
+			t.Fatalf("账本 mutation 样本 %s 未判红: %s", name, formatNegativeSurfaceHits(redHits))
+		}
+	}
+	for _, name := range []string{"AddHeader", "SetTimeout"} {
+		if hasNegativeSurfaceName(redHits, name) {
+			t.Fatalf("非账本样本 %s 被误杀: %s", name, formatNegativeSurfaceHits(redHits))
+		}
+	}
+	t.Logf("LEDGER_MUTATION_RED_CONTROL hits=%s", formatNegativeSurfaceHits(redHits))
+	t.Log("NON_LEDGER_GREEN_CONTROL names=AddHeader,SetTimeout hits=0")
+
+	if err := os.Remove(path); err != nil {
+		t.Fatalf("移除临时账本样本失败: %v", err)
+	}
+	greenHits, err := scanSDKNonTestGo(directory)
+	if err != nil {
+		t.Fatalf("移除账本样本后扫描失败: %v", err)
+	}
+	if len(greenHits) != 0 {
+		t.Fatalf("移除账本样本后守卫仍未恢复绿: %s", formatNegativeSurfaceHits(greenHits))
+	}
+	t.Log("LEDGER_MUTATION_GREEN_AFTER_REMOVE hits=0")
+}
+
 func TestNegativeSurfaceGuardCallSurfaceNegativeControls(t *testing.T) {
 	directory := t.TempDir()
 	path := filepath.Join(directory, "synthetic_call_surface.go")
@@ -544,6 +593,15 @@ func httpCall() {
 func hasNegativeSurfaceCategory(hits []negativeSurfaceHit, category negativeSurfaceCategory) bool {
 	for _, hit := range hits {
 		if hit.category == category {
+			return true
+		}
+	}
+	return false
+}
+
+func hasNegativeSurfaceName(hits []negativeSurfaceHit, name string) bool {
+	for _, hit := range hits {
+		if hit.name == name {
 			return true
 		}
 	}
