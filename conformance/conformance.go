@@ -200,7 +200,11 @@ func runGateway(ctx context.Context, cfg config, siteClient *sdk.GatewaySiteCont
 	if err != nil {
 		return err
 	}
-	if _, err := pollToTerminal(ctx, client, invocationID); err != nil {
+	snapshot, err := pollToTerminal(ctx, client, invocationID)
+	if err != nil {
+		return err
+	}
+	if err := assertSuccessfulGatewayTerminal(snapshot); err != nil {
 		return err
 	}
 
@@ -309,6 +313,39 @@ func pollToTerminal(ctx context.Context, client *sdk.GatewayClient, invocationID
 		}
 	}
 	return nil, fmt.Errorf("gateway invocation 在轮询预算内未到终态")
+}
+
+// assertSuccessfulGatewayTerminal 保持 conformance 的成功终态断言为封闭集。
+func assertSuccessfulGatewayTerminal(snapshot *sdk.GatewayInvocationSnapshot) error {
+	if snapshot == nil {
+		return fmt.Errorf("gateway invocation returned nil terminal snapshot")
+	}
+
+	switch snapshot.State {
+	case sdk.GatewayStateCompleted:
+		if !snapshot.Terminal {
+			return fmt.Errorf("gateway invocation completed state is not terminal: state=%q", snapshot.State)
+		}
+		return nil
+	case sdk.GatewayStateFailed, sdk.GatewayStateCancelled:
+		return fmt.Errorf("gateway invocation did not complete successfully: state=%q terminal=%t reason=%s", snapshot.State, snapshot.Terminal, gatewaySnapshotFailureReason(snapshot))
+	case sdk.GatewayStateReconciling, sdk.GatewayStateSettlementShortfall:
+		// 这两个状态是已知的收尾中间态，不是成功终态；若它们从 poller 返回，
+		// 说明服务端违反了 terminal/state 约束或 conformance 未完成，必须失败。
+		return fmt.Errorf("gateway invocation ended in non-terminal reconciliation state: state=%q terminal=%t", snapshot.State, snapshot.Terminal)
+	case sdk.GatewayStateAccepted, sdk.GatewayStateRunning, sdk.GatewayStateCancelPending:
+		return fmt.Errorf("gateway invocation returned a non-terminal state: state=%q terminal=%t", snapshot.State, snapshot.Terminal)
+	default:
+		return fmt.Errorf("gateway invocation returned an unhandled terminal state: state=%q terminal=%t", snapshot.State, snapshot.Terminal)
+	}
+}
+
+func gatewaySnapshotFailureReason(snapshot *sdk.GatewayInvocationSnapshot) string {
+	if snapshot.Error == nil {
+		return "server_error=<none>"
+	}
+	// GatewayError.Error 只暴露服务端稳定错误码，避免把不受信任的 Message 带入诊断。
+	return snapshot.Error.Error()
 }
 
 // isKnownGatewayState 保持 Gateway 状态机断言为封闭集。
