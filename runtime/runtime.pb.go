@@ -2134,6 +2134,7 @@ type SkuPublicPrice struct {
 	//	*SkuPublicPrice_TokenTiered
 	//	*SkuPublicPrice_PerImage
 	//	*SkuPublicPrice_PerSecond
+	//	*SkuPublicPrice_PerCharacter
 	Rule          isSkuPublicPrice_Rule `protobuf_oneof:"rule"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -2247,6 +2248,15 @@ func (x *SkuPublicPrice) GetPerSecond() *PerSecondPrice {
 	return nil
 }
 
+func (x *SkuPublicPrice) GetPerCharacter() *PerCharacterPrice {
+	if x != nil {
+		if x, ok := x.Rule.(*SkuPublicPrice_PerCharacter); ok {
+			return x.PerCharacter
+		}
+	}
+	return nil
+}
+
 type isSkuPublicPrice_Rule interface {
 	isSkuPublicPrice_Rule()
 }
@@ -2267,6 +2277,10 @@ type SkuPublicPrice_PerSecond struct {
 	PerSecond *PerSecondPrice `protobuf:"bytes,9,opt,name=per_second,json=perSecond,proto3,oneof"`
 }
 
+type SkuPublicPrice_PerCharacter struct {
+	PerCharacter *PerCharacterPrice `protobuf:"bytes,10,opt,name=per_character,json=perCharacter,proto3,oneof"`
+}
+
 func (*SkuPublicPrice_Flat) isSkuPublicPrice_Rule() {}
 
 func (*SkuPublicPrice_TokenTiered) isSkuPublicPrice_Rule() {}
@@ -2274,6 +2288,8 @@ func (*SkuPublicPrice_TokenTiered) isSkuPublicPrice_Rule() {}
 func (*SkuPublicPrice_PerImage) isSkuPublicPrice_Rule() {}
 
 func (*SkuPublicPrice_PerSecond) isSkuPublicPrice_Rule() {}
+
+func (*SkuPublicPrice_PerCharacter) isSkuPublicPrice_Rule() {}
 
 type FlatPrice struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -2319,6 +2335,53 @@ func (x *FlatPrice) GetUnits() string {
 	return ""
 }
 
+// PerCharacterPrice 是 BE-114（minimax TTS）的计价规则：按合成字符数计价。
+// ⚠ 单价与其余价格分支一样用**字符串**承载，绝不用浮点——
+// 「金额与额度永不用浮点」是仓级不变量，序列化用字符串是它在契约面的落法。
+type PerCharacterPrice struct {
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	UnitsPerCharacter string                 `protobuf:"bytes,1,opt,name=units_per_character,json=unitsPerCharacter,proto3" json:"units_per_character,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
+}
+
+func (x *PerCharacterPrice) Reset() {
+	*x = PerCharacterPrice{}
+	mi := &file_runtime_proto_msgTypes[31]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PerCharacterPrice) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PerCharacterPrice) ProtoMessage() {}
+
+func (x *PerCharacterPrice) ProtoReflect() protoreflect.Message {
+	mi := &file_runtime_proto_msgTypes[31]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PerCharacterPrice.ProtoReflect.Descriptor instead.
+func (*PerCharacterPrice) Descriptor() ([]byte, []int) {
+	return file_runtime_proto_rawDescGZIP(), []int{31}
+}
+
+func (x *PerCharacterPrice) GetUnitsPerCharacter() string {
+	if x != nil {
+		return x.UnitsPerCharacter
+	}
+	return ""
+}
+
 type TokenTier struct {
 	state                        protoimpl.MessageState `protogen:"open.v1"`
 	ContextFromTokens            string                 `protobuf:"bytes,1,opt,name=context_from_tokens,json=contextFromTokens,proto3" json:"context_from_tokens,omitempty"`
@@ -2332,7 +2395,7 @@ type TokenTier struct {
 
 func (x *TokenTier) Reset() {
 	*x = TokenTier{}
-	mi := &file_runtime_proto_msgTypes[31]
+	mi := &file_runtime_proto_msgTypes[32]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2344,7 +2407,7 @@ func (x *TokenTier) String() string {
 func (*TokenTier) ProtoMessage() {}
 
 func (x *TokenTier) ProtoReflect() protoreflect.Message {
-	mi := &file_runtime_proto_msgTypes[31]
+	mi := &file_runtime_proto_msgTypes[32]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2357,7 +2420,7 @@ func (x *TokenTier) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TokenTier.ProtoReflect.Descriptor instead.
 func (*TokenTier) Descriptor() ([]byte, []int) {
-	return file_runtime_proto_rawDescGZIP(), []int{31}
+	return file_runtime_proto_rawDescGZIP(), []int{32}
 }
 
 func (x *TokenTier) GetContextFromTokens() string {
@@ -2404,7 +2467,7 @@ type TokenTieredPrice struct {
 
 func (x *TokenTieredPrice) Reset() {
 	*x = TokenTieredPrice{}
-	mi := &file_runtime_proto_msgTypes[32]
+	mi := &file_runtime_proto_msgTypes[33]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2416,7 +2479,7 @@ func (x *TokenTieredPrice) String() string {
 func (*TokenTieredPrice) ProtoMessage() {}
 
 func (x *TokenTieredPrice) ProtoReflect() protoreflect.Message {
-	mi := &file_runtime_proto_msgTypes[32]
+	mi := &file_runtime_proto_msgTypes[33]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2429,7 +2492,7 @@ func (x *TokenTieredPrice) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TokenTieredPrice.ProtoReflect.Descriptor instead.
 func (*TokenTieredPrice) Descriptor() ([]byte, []int) {
-	return file_runtime_proto_rawDescGZIP(), []int{32}
+	return file_runtime_proto_rawDescGZIP(), []int{33}
 }
 
 func (x *TokenTieredPrice) GetTiers() []*TokenTier {
@@ -2454,7 +2517,7 @@ type PerImageTier struct {
 
 func (x *PerImageTier) Reset() {
 	*x = PerImageTier{}
-	mi := &file_runtime_proto_msgTypes[33]
+	mi := &file_runtime_proto_msgTypes[34]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2466,7 +2529,7 @@ func (x *PerImageTier) String() string {
 func (*PerImageTier) ProtoMessage() {}
 
 func (x *PerImageTier) ProtoReflect() protoreflect.Message {
-	mi := &file_runtime_proto_msgTypes[33]
+	mi := &file_runtime_proto_msgTypes[34]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2479,7 +2542,7 @@ func (x *PerImageTier) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PerImageTier.ProtoReflect.Descriptor instead.
 func (*PerImageTier) Descriptor() ([]byte, []int) {
-	return file_runtime_proto_rawDescGZIP(), []int{33}
+	return file_runtime_proto_rawDescGZIP(), []int{34}
 }
 
 func (x *PerImageTier) GetResolution() string {
@@ -2512,7 +2575,7 @@ type PerImagePrice struct {
 
 func (x *PerImagePrice) Reset() {
 	*x = PerImagePrice{}
-	mi := &file_runtime_proto_msgTypes[34]
+	mi := &file_runtime_proto_msgTypes[35]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2524,7 +2587,7 @@ func (x *PerImagePrice) String() string {
 func (*PerImagePrice) ProtoMessage() {}
 
 func (x *PerImagePrice) ProtoReflect() protoreflect.Message {
-	mi := &file_runtime_proto_msgTypes[34]
+	mi := &file_runtime_proto_msgTypes[35]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2537,7 +2600,7 @@ func (x *PerImagePrice) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PerImagePrice.ProtoReflect.Descriptor instead.
 func (*PerImagePrice) Descriptor() ([]byte, []int) {
-	return file_runtime_proto_rawDescGZIP(), []int{34}
+	return file_runtime_proto_rawDescGZIP(), []int{35}
 }
 
 func (x *PerImagePrice) GetTiers() []*PerImageTier {
@@ -2559,7 +2622,7 @@ type PerSecondTier struct {
 
 func (x *PerSecondTier) Reset() {
 	*x = PerSecondTier{}
-	mi := &file_runtime_proto_msgTypes[35]
+	mi := &file_runtime_proto_msgTypes[36]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2571,7 +2634,7 @@ func (x *PerSecondTier) String() string {
 func (*PerSecondTier) ProtoMessage() {}
 
 func (x *PerSecondTier) ProtoReflect() protoreflect.Message {
-	mi := &file_runtime_proto_msgTypes[35]
+	mi := &file_runtime_proto_msgTypes[36]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2584,7 +2647,7 @@ func (x *PerSecondTier) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PerSecondTier.ProtoReflect.Descriptor instead.
 func (*PerSecondTier) Descriptor() ([]byte, []int) {
-	return file_runtime_proto_rawDescGZIP(), []int{35}
+	return file_runtime_proto_rawDescGZIP(), []int{36}
 }
 
 func (x *PerSecondTier) GetResolution() string {
@@ -2617,7 +2680,7 @@ type PerSecondPrice struct {
 
 func (x *PerSecondPrice) Reset() {
 	*x = PerSecondPrice{}
-	mi := &file_runtime_proto_msgTypes[36]
+	mi := &file_runtime_proto_msgTypes[37]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2629,7 +2692,7 @@ func (x *PerSecondPrice) String() string {
 func (*PerSecondPrice) ProtoMessage() {}
 
 func (x *PerSecondPrice) ProtoReflect() protoreflect.Message {
-	mi := &file_runtime_proto_msgTypes[36]
+	mi := &file_runtime_proto_msgTypes[37]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2642,7 +2705,7 @@ func (x *PerSecondPrice) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PerSecondPrice.ProtoReflect.Descriptor instead.
 func (*PerSecondPrice) Descriptor() ([]byte, []int) {
-	return file_runtime_proto_rawDescGZIP(), []int{36}
+	return file_runtime_proto_rawDescGZIP(), []int{37}
 }
 
 func (x *PerSecondPrice) GetTiers() []*PerSecondTier {
@@ -2660,7 +2723,7 @@ type GetOfferCatalogRequest struct {
 
 func (x *GetOfferCatalogRequest) Reset() {
 	*x = GetOfferCatalogRequest{}
-	mi := &file_runtime_proto_msgTypes[37]
+	mi := &file_runtime_proto_msgTypes[38]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2672,7 +2735,7 @@ func (x *GetOfferCatalogRequest) String() string {
 func (*GetOfferCatalogRequest) ProtoMessage() {}
 
 func (x *GetOfferCatalogRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_runtime_proto_msgTypes[37]
+	mi := &file_runtime_proto_msgTypes[38]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2685,7 +2748,7 @@ func (x *GetOfferCatalogRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetOfferCatalogRequest.ProtoReflect.Descriptor instead.
 func (*GetOfferCatalogRequest) Descriptor() ([]byte, []int) {
-	return file_runtime_proto_rawDescGZIP(), []int{37}
+	return file_runtime_proto_rawDescGZIP(), []int{38}
 }
 
 type OfferCatalogReply struct {
@@ -2700,7 +2763,7 @@ type OfferCatalogReply struct {
 
 func (x *OfferCatalogReply) Reset() {
 	*x = OfferCatalogReply{}
-	mi := &file_runtime_proto_msgTypes[38]
+	mi := &file_runtime_proto_msgTypes[39]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2712,7 +2775,7 @@ func (x *OfferCatalogReply) String() string {
 func (*OfferCatalogReply) ProtoMessage() {}
 
 func (x *OfferCatalogReply) ProtoReflect() protoreflect.Message {
-	mi := &file_runtime_proto_msgTypes[38]
+	mi := &file_runtime_proto_msgTypes[39]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2725,7 +2788,7 @@ func (x *OfferCatalogReply) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OfferCatalogReply.ProtoReflect.Descriptor instead.
 func (*OfferCatalogReply) Descriptor() ([]byte, []int) {
-	return file_runtime_proto_rawDescGZIP(), []int{38}
+	return file_runtime_proto_rawDescGZIP(), []int{39}
 }
 
 func (x *OfferCatalogReply) GetRequestId() string {
@@ -2776,7 +2839,7 @@ type OfferCatalogItem struct {
 
 func (x *OfferCatalogItem) Reset() {
 	*x = OfferCatalogItem{}
-	mi := &file_runtime_proto_msgTypes[39]
+	mi := &file_runtime_proto_msgTypes[40]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2788,7 +2851,7 @@ func (x *OfferCatalogItem) String() string {
 func (*OfferCatalogItem) ProtoMessage() {}
 
 func (x *OfferCatalogItem) ProtoReflect() protoreflect.Message {
-	mi := &file_runtime_proto_msgTypes[39]
+	mi := &file_runtime_proto_msgTypes[40]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2801,7 +2864,7 @@ func (x *OfferCatalogItem) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OfferCatalogItem.ProtoReflect.Descriptor instead.
 func (*OfferCatalogItem) Descriptor() ([]byte, []int) {
-	return file_runtime_proto_rawDescGZIP(), []int{39}
+	return file_runtime_proto_rawDescGZIP(), []int{40}
 }
 
 func (x *OfferCatalogItem) GetOfferId() string {
@@ -3089,7 +3152,7 @@ const file_runtime_proto_rawDesc = "" +
 	"\x19supported_request_schemas\x18\b \x03(\v2\x1e.runtime.v1.SkuSupportedSchemaR\x17supportedRequestSchemas\"i\n" +
 	"\x12SkuSupportedSchema\x12%\n" +
 	"\x0eschema_version\x18\x01 \x01(\tR\rschemaVersion\x12,\n" +
-	"\x12request_schema_jcs\x18\x02 \x01(\fR\x10requestSchemaJcs\"\xcb\x03\n" +
+	"\x12request_schema_jcs\x18\x02 \x01(\fR\x10requestSchemaJcs\"\x91\x04\n" +
 	"\x0eSkuPublicPrice\x12 \n" +
 	"\fsku_price_id\x18\x01 \x01(\tR\n" +
 	"skuPriceId\x12\x18\n" +
@@ -3101,11 +3164,15 @@ const file_runtime_proto_rawDesc = "" +
 	"\ftoken_tiered\x18\a \x01(\v2\x1c.runtime.v1.TokenTieredPriceH\x00R\vtokenTiered\x128\n" +
 	"\tper_image\x18\b \x01(\v2\x19.runtime.v1.PerImagePriceH\x00R\bperImage\x12;\n" +
 	"\n" +
-	"per_second\x18\t \x01(\v2\x1a.runtime.v1.PerSecondPriceH\x00R\tperSecondB\x06\n" +
+	"per_second\x18\t \x01(\v2\x1a.runtime.v1.PerSecondPriceH\x00R\tperSecond\x12D\n" +
+	"\rper_character\x18\n" +
+	" \x01(\v2\x1d.runtime.v1.PerCharacterPriceH\x00R\fperCharacterB\x06\n" +
 	"\x04ruleB\x12\n" +
 	"\x10_effective_to_ms\"!\n" +
 	"\tFlatPrice\x12\x14\n" +
-	"\x05units\x18\x01 \x01(\tR\x05units\"\xac\x02\n" +
+	"\x05units\x18\x01 \x01(\tR\x05units\"C\n" +
+	"\x11PerCharacterPrice\x12.\n" +
+	"\x13units_per_character\x18\x01 \x01(\tR\x11unitsPerCharacter\"\xac\x02\n" +
 	"\tTokenTier\x12.\n" +
 	"\x13context_from_tokens\x18\x01 \x01(\tR\x11contextFromTokens\x12*\n" +
 	"\x11context_to_tokens\x18\x02 \x01(\tR\x0fcontextToTokens\x12F\n" +
@@ -3181,7 +3248,7 @@ func file_runtime_proto_rawDescGZIP() []byte {
 	return file_runtime_proto_rawDescData
 }
 
-var file_runtime_proto_msgTypes = make([]protoimpl.MessageInfo, 41)
+var file_runtime_proto_msgTypes = make([]protoimpl.MessageInfo, 42)
 var file_runtime_proto_goTypes = []any{
 	(*ExchangeRuntimeTokenRequest)(nil),    // 0: runtime.v1.ExchangeRuntimeTokenRequest
 	(*ExchangeRuntimeTokenReply)(nil),      // 1: runtime.v1.ExchangeRuntimeTokenReply
@@ -3214,20 +3281,21 @@ var file_runtime_proto_goTypes = []any{
 	(*SkuSupportedSchema)(nil),             // 28: runtime.v1.SkuSupportedSchema
 	(*SkuPublicPrice)(nil),                 // 29: runtime.v1.SkuPublicPrice
 	(*FlatPrice)(nil),                      // 30: runtime.v1.FlatPrice
-	(*TokenTier)(nil),                      // 31: runtime.v1.TokenTier
-	(*TokenTieredPrice)(nil),               // 32: runtime.v1.TokenTieredPrice
-	(*PerImageTier)(nil),                   // 33: runtime.v1.PerImageTier
-	(*PerImagePrice)(nil),                  // 34: runtime.v1.PerImagePrice
-	(*PerSecondTier)(nil),                  // 35: runtime.v1.PerSecondTier
-	(*PerSecondPrice)(nil),                 // 36: runtime.v1.PerSecondPrice
-	(*GetOfferCatalogRequest)(nil),         // 37: runtime.v1.GetOfferCatalogRequest
-	(*OfferCatalogReply)(nil),              // 38: runtime.v1.OfferCatalogReply
-	(*OfferCatalogItem)(nil),               // 39: runtime.v1.OfferCatalogItem
-	nil,                                    // 40: runtime.v1.VerifyAndConfirmPaymentRequest.SignedHeadersEntry
+	(*PerCharacterPrice)(nil),              // 31: runtime.v1.PerCharacterPrice
+	(*TokenTier)(nil),                      // 32: runtime.v1.TokenTier
+	(*TokenTieredPrice)(nil),               // 33: runtime.v1.TokenTieredPrice
+	(*PerImageTier)(nil),                   // 34: runtime.v1.PerImageTier
+	(*PerImagePrice)(nil),                  // 35: runtime.v1.PerImagePrice
+	(*PerSecondTier)(nil),                  // 36: runtime.v1.PerSecondTier
+	(*PerSecondPrice)(nil),                 // 37: runtime.v1.PerSecondPrice
+	(*GetOfferCatalogRequest)(nil),         // 38: runtime.v1.GetOfferCatalogRequest
+	(*OfferCatalogReply)(nil),              // 39: runtime.v1.OfferCatalogReply
+	(*OfferCatalogItem)(nil),               // 40: runtime.v1.OfferCatalogItem
+	nil,                                    // 41: runtime.v1.VerifyAndConfirmPaymentRequest.SignedHeadersEntry
 }
 var file_runtime_proto_depIdxs = []int32{
 	6,  // 0: runtime.v1.RegistrationReply.registration_grant:type_name -> runtime.v1.RegistrationGrant
-	40, // 1: runtime.v1.VerifyAndConfirmPaymentRequest.signed_headers:type_name -> runtime.v1.VerifyAndConfirmPaymentRequest.SignedHeadersEntry
+	41, // 1: runtime.v1.VerifyAndConfirmPaymentRequest.signed_headers:type_name -> runtime.v1.VerifyAndConfirmPaymentRequest.SignedHeadersEntry
 	13, // 2: runtime.v1.VerifyAndConfirmPaymentReply.order:type_name -> runtime.v1.Order
 	14, // 3: runtime.v1.VerifyAndConfirmPaymentReply.grant:type_name -> runtime.v1.RetailGrant
 	15, // 4: runtime.v1.VerifyAndConfirmPaymentReply.grant_plan:type_name -> runtime.v1.GrantPlan
@@ -3237,44 +3305,45 @@ var file_runtime_proto_depIdxs = []int32{
 	29, // 8: runtime.v1.SkuCatalogItem.price:type_name -> runtime.v1.SkuPublicPrice
 	28, // 9: runtime.v1.SkuCatalogItem.supported_request_schemas:type_name -> runtime.v1.SkuSupportedSchema
 	30, // 10: runtime.v1.SkuPublicPrice.flat:type_name -> runtime.v1.FlatPrice
-	32, // 11: runtime.v1.SkuPublicPrice.token_tiered:type_name -> runtime.v1.TokenTieredPrice
-	34, // 12: runtime.v1.SkuPublicPrice.per_image:type_name -> runtime.v1.PerImagePrice
-	36, // 13: runtime.v1.SkuPublicPrice.per_second:type_name -> runtime.v1.PerSecondPrice
-	31, // 14: runtime.v1.TokenTieredPrice.tiers:type_name -> runtime.v1.TokenTier
-	33, // 15: runtime.v1.PerImagePrice.tiers:type_name -> runtime.v1.PerImageTier
-	35, // 16: runtime.v1.PerSecondPrice.tiers:type_name -> runtime.v1.PerSecondTier
-	39, // 17: runtime.v1.OfferCatalogReply.offers:type_name -> runtime.v1.OfferCatalogItem
-	0,  // 18: runtime.v1.RuntimeService.ExchangeRuntimeToken:input_type -> runtime.v1.ExchangeRuntimeTokenRequest
-	2,  // 19: runtime.v1.RuntimeService.ResolveRegistration:input_type -> runtime.v1.ResolveRegistrationRequest
-	4,  // 20: runtime.v1.RuntimeService.ConfirmRegistration:input_type -> runtime.v1.ConfirmRegistrationRequest
-	7,  // 21: runtime.v1.RuntimeService.CreateOrder:input_type -> runtime.v1.CreateOrderRequest
-	9,  // 22: runtime.v1.RuntimeService.VerifyAndConfirmPayment:input_type -> runtime.v1.VerifyAndConfirmPaymentRequest
-	11, // 23: runtime.v1.RuntimeService.GetOrder:input_type -> runtime.v1.GetOrderRequest
-	16, // 24: runtime.v1.RuntimeService.SyncIdentity:input_type -> runtime.v1.SyncIdentityRequest
-	17, // 25: runtime.v1.RuntimeService.SyncVerificationStatus:input_type -> runtime.v1.SyncVerificationStatusRequest
-	18, // 26: runtime.v1.RuntimeService.DisableIdentity:input_type -> runtime.v1.DisableIdentityRequest
-	20, // 27: runtime.v1.RuntimeService.GetBalance:input_type -> runtime.v1.GetBalanceRequest
-	22, // 28: runtime.v1.RuntimeService.ListLedger:input_type -> runtime.v1.ListLedgerRequest
-	25, // 29: runtime.v1.RuntimeService.GetSkuCatalog:input_type -> runtime.v1.GetSkuCatalogRequest
-	37, // 30: runtime.v1.RuntimeService.GetOfferCatalog:input_type -> runtime.v1.GetOfferCatalogRequest
-	1,  // 31: runtime.v1.RuntimeService.ExchangeRuntimeToken:output_type -> runtime.v1.ExchangeRuntimeTokenReply
-	3,  // 32: runtime.v1.RuntimeService.ResolveRegistration:output_type -> runtime.v1.RegistrationIntent
-	5,  // 33: runtime.v1.RuntimeService.ConfirmRegistration:output_type -> runtime.v1.RegistrationReply
-	8,  // 34: runtime.v1.RuntimeService.CreateOrder:output_type -> runtime.v1.CreateOrderReply
-	10, // 35: runtime.v1.RuntimeService.VerifyAndConfirmPayment:output_type -> runtime.v1.VerifyAndConfirmPaymentReply
-	12, // 36: runtime.v1.RuntimeService.GetOrder:output_type -> runtime.v1.GetOrderReply
-	19, // 37: runtime.v1.RuntimeService.SyncIdentity:output_type -> runtime.v1.IdentityReply
-	19, // 38: runtime.v1.RuntimeService.SyncVerificationStatus:output_type -> runtime.v1.IdentityReply
-	19, // 39: runtime.v1.RuntimeService.DisableIdentity:output_type -> runtime.v1.IdentityReply
-	21, // 40: runtime.v1.RuntimeService.GetBalance:output_type -> runtime.v1.BalanceReply
-	23, // 41: runtime.v1.RuntimeService.ListLedger:output_type -> runtime.v1.LedgerReply
-	26, // 42: runtime.v1.RuntimeService.GetSkuCatalog:output_type -> runtime.v1.SkuCatalogReply
-	38, // 43: runtime.v1.RuntimeService.GetOfferCatalog:output_type -> runtime.v1.OfferCatalogReply
-	31, // [31:44] is the sub-list for method output_type
-	18, // [18:31] is the sub-list for method input_type
-	18, // [18:18] is the sub-list for extension type_name
-	18, // [18:18] is the sub-list for extension extendee
-	0,  // [0:18] is the sub-list for field type_name
+	33, // 11: runtime.v1.SkuPublicPrice.token_tiered:type_name -> runtime.v1.TokenTieredPrice
+	35, // 12: runtime.v1.SkuPublicPrice.per_image:type_name -> runtime.v1.PerImagePrice
+	37, // 13: runtime.v1.SkuPublicPrice.per_second:type_name -> runtime.v1.PerSecondPrice
+	31, // 14: runtime.v1.SkuPublicPrice.per_character:type_name -> runtime.v1.PerCharacterPrice
+	32, // 15: runtime.v1.TokenTieredPrice.tiers:type_name -> runtime.v1.TokenTier
+	34, // 16: runtime.v1.PerImagePrice.tiers:type_name -> runtime.v1.PerImageTier
+	36, // 17: runtime.v1.PerSecondPrice.tiers:type_name -> runtime.v1.PerSecondTier
+	40, // 18: runtime.v1.OfferCatalogReply.offers:type_name -> runtime.v1.OfferCatalogItem
+	0,  // 19: runtime.v1.RuntimeService.ExchangeRuntimeToken:input_type -> runtime.v1.ExchangeRuntimeTokenRequest
+	2,  // 20: runtime.v1.RuntimeService.ResolveRegistration:input_type -> runtime.v1.ResolveRegistrationRequest
+	4,  // 21: runtime.v1.RuntimeService.ConfirmRegistration:input_type -> runtime.v1.ConfirmRegistrationRequest
+	7,  // 22: runtime.v1.RuntimeService.CreateOrder:input_type -> runtime.v1.CreateOrderRequest
+	9,  // 23: runtime.v1.RuntimeService.VerifyAndConfirmPayment:input_type -> runtime.v1.VerifyAndConfirmPaymentRequest
+	11, // 24: runtime.v1.RuntimeService.GetOrder:input_type -> runtime.v1.GetOrderRequest
+	16, // 25: runtime.v1.RuntimeService.SyncIdentity:input_type -> runtime.v1.SyncIdentityRequest
+	17, // 26: runtime.v1.RuntimeService.SyncVerificationStatus:input_type -> runtime.v1.SyncVerificationStatusRequest
+	18, // 27: runtime.v1.RuntimeService.DisableIdentity:input_type -> runtime.v1.DisableIdentityRequest
+	20, // 28: runtime.v1.RuntimeService.GetBalance:input_type -> runtime.v1.GetBalanceRequest
+	22, // 29: runtime.v1.RuntimeService.ListLedger:input_type -> runtime.v1.ListLedgerRequest
+	25, // 30: runtime.v1.RuntimeService.GetSkuCatalog:input_type -> runtime.v1.GetSkuCatalogRequest
+	38, // 31: runtime.v1.RuntimeService.GetOfferCatalog:input_type -> runtime.v1.GetOfferCatalogRequest
+	1,  // 32: runtime.v1.RuntimeService.ExchangeRuntimeToken:output_type -> runtime.v1.ExchangeRuntimeTokenReply
+	3,  // 33: runtime.v1.RuntimeService.ResolveRegistration:output_type -> runtime.v1.RegistrationIntent
+	5,  // 34: runtime.v1.RuntimeService.ConfirmRegistration:output_type -> runtime.v1.RegistrationReply
+	8,  // 35: runtime.v1.RuntimeService.CreateOrder:output_type -> runtime.v1.CreateOrderReply
+	10, // 36: runtime.v1.RuntimeService.VerifyAndConfirmPayment:output_type -> runtime.v1.VerifyAndConfirmPaymentReply
+	12, // 37: runtime.v1.RuntimeService.GetOrder:output_type -> runtime.v1.GetOrderReply
+	19, // 38: runtime.v1.RuntimeService.SyncIdentity:output_type -> runtime.v1.IdentityReply
+	19, // 39: runtime.v1.RuntimeService.SyncVerificationStatus:output_type -> runtime.v1.IdentityReply
+	19, // 40: runtime.v1.RuntimeService.DisableIdentity:output_type -> runtime.v1.IdentityReply
+	21, // 41: runtime.v1.RuntimeService.GetBalance:output_type -> runtime.v1.BalanceReply
+	23, // 42: runtime.v1.RuntimeService.ListLedger:output_type -> runtime.v1.LedgerReply
+	26, // 43: runtime.v1.RuntimeService.GetSkuCatalog:output_type -> runtime.v1.SkuCatalogReply
+	39, // 44: runtime.v1.RuntimeService.GetOfferCatalog:output_type -> runtime.v1.OfferCatalogReply
+	32, // [32:45] is the sub-list for method output_type
+	19, // [19:32] is the sub-list for method input_type
+	19, // [19:19] is the sub-list for extension type_name
+	19, // [19:19] is the sub-list for extension extendee
+	0,  // [0:19] is the sub-list for field type_name
 }
 
 func init() { file_runtime_proto_init() }
@@ -3290,15 +3359,16 @@ func file_runtime_proto_init() {
 		(*SkuPublicPrice_TokenTiered)(nil),
 		(*SkuPublicPrice_PerImage)(nil),
 		(*SkuPublicPrice_PerSecond)(nil),
+		(*SkuPublicPrice_PerCharacter)(nil),
 	}
-	file_runtime_proto_msgTypes[39].OneofWrappers = []any{}
+	file_runtime_proto_msgTypes[40].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_runtime_proto_rawDesc), len(file_runtime_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   41,
+			NumMessages:   42,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

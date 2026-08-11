@@ -264,11 +264,19 @@ message SkuPublicPrice {
     TokenTieredPrice token_tiered = 7;
     PerImagePrice per_image = 8;
     PerSecondPrice per_second = 9;
+    PerCharacterPrice per_character = 10;
   }
 }
 
 message FlatPrice {
   string units = 1;
+}
+
+// PerCharacterPrice 是 BE-114（minimax TTS）的计价规则：按合成字符数计价。
+// ⚠ 单价与其余价格分支一样用**字符串**承载，绝不用浮点——
+// 「金额与额度永不用浮点」是仓级不变量，序列化用字符串是它在契约面的落法。
+message PerCharacterPrice {
+  string units_per_character = 1;
 }
 
 message TokenTier {
