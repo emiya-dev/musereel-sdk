@@ -2951,6 +2951,186 @@ func (x *OfferCatalogItem) GetEffectiveToMs() int64 {
 	return 0
 }
 
+type ListSiteBrandingRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListSiteBrandingRequest) Reset() {
+	*x = ListSiteBrandingRequest{}
+	mi := &file_runtime_proto_msgTypes[41]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListSiteBrandingRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListSiteBrandingRequest) ProtoMessage() {}
+
+func (x *ListSiteBrandingRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_runtime_proto_msgTypes[41]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListSiteBrandingRequest.ProtoReflect.Descriptor instead.
+func (*ListSiteBrandingRequest) Descriptor() ([]byte, []int) {
+	return file_runtime_proto_rawDescGZIP(), []int{41}
+}
+
+type SiteBrandingItem struct {
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	SiteId           string                 `protobuf:"bytes,1,opt,name=site_id,json=siteId,proto3" json:"site_id,omitempty"`                                 // 站点稳定标识
+	CanonicalHost    string                 `protobuf:"bytes,2,opt,name=canonical_host,json=canonicalHost,proto3" json:"canonical_host,omitempty"`            // 公有入口主机名，工作台按此匹配请求 Host
+	DisplayName      string                 `protobuf:"bytes,3,opt,name=display_name,json=displayName,proto3" json:"display_name,omitempty"`                  // 站点显示名
+	LogoUrl          string                 `protobuf:"bytes,4,opt,name=logo_url,json=logoUrl,proto3" json:"logo_url,omitempty"`                              // 未配置时为空字符串，不是 error
+	HomeAnimationUrl string                 `protobuf:"bytes,5,opt,name=home_animation_url,json=homeAnimationUrl,proto3" json:"home_animation_url,omitempty"` // 未配置时为空字符串，不是 error
+	BrandingRevision string                 `protobuf:"bytes,6,opt,name=branding_revision,json=brandingRevision,proto3" json:"branding_revision,omitempty"`   // 品牌内容版本；变化即内容有变
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
+}
+
+func (x *SiteBrandingItem) Reset() {
+	*x = SiteBrandingItem{}
+	mi := &file_runtime_proto_msgTypes[42]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SiteBrandingItem) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SiteBrandingItem) ProtoMessage() {}
+
+func (x *SiteBrandingItem) ProtoReflect() protoreflect.Message {
+	mi := &file_runtime_proto_msgTypes[42]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SiteBrandingItem.ProtoReflect.Descriptor instead.
+func (*SiteBrandingItem) Descriptor() ([]byte, []int) {
+	return file_runtime_proto_rawDescGZIP(), []int{42}
+}
+
+func (x *SiteBrandingItem) GetSiteId() string {
+	if x != nil {
+		return x.SiteId
+	}
+	return ""
+}
+
+func (x *SiteBrandingItem) GetCanonicalHost() string {
+	if x != nil {
+		return x.CanonicalHost
+	}
+	return ""
+}
+
+func (x *SiteBrandingItem) GetDisplayName() string {
+	if x != nil {
+		return x.DisplayName
+	}
+	return ""
+}
+
+func (x *SiteBrandingItem) GetLogoUrl() string {
+	if x != nil {
+		return x.LogoUrl
+	}
+	return ""
+}
+
+func (x *SiteBrandingItem) GetHomeAnimationUrl() string {
+	if x != nil {
+		return x.HomeAnimationUrl
+	}
+	return ""
+}
+
+func (x *SiteBrandingItem) GetBrandingRevision() string {
+	if x != nil {
+		return x.BrandingRevision
+	}
+	return ""
+}
+
+type ListSiteBrandingReply struct {
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	RequestId        string                 `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
+	Sites            []*SiteBrandingItem    `protobuf:"bytes,2,rep,name=sites,proto3" json:"sites,omitempty"`
+	SnapshotRevision string                 `protobuf:"bytes,3,opt,name=snapshot_revision,json=snapshotRevision,proto3" json:"snapshot_revision,omitempty"` // 整批快照版本，供工作台跳过无变化的刷新
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
+}
+
+func (x *ListSiteBrandingReply) Reset() {
+	*x = ListSiteBrandingReply{}
+	mi := &file_runtime_proto_msgTypes[43]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListSiteBrandingReply) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListSiteBrandingReply) ProtoMessage() {}
+
+func (x *ListSiteBrandingReply) ProtoReflect() protoreflect.Message {
+	mi := &file_runtime_proto_msgTypes[43]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListSiteBrandingReply.ProtoReflect.Descriptor instead.
+func (*ListSiteBrandingReply) Descriptor() ([]byte, []int) {
+	return file_runtime_proto_rawDescGZIP(), []int{43}
+}
+
+func (x *ListSiteBrandingReply) GetRequestId() string {
+	if x != nil {
+		return x.RequestId
+	}
+	return ""
+}
+
+func (x *ListSiteBrandingReply) GetSites() []*SiteBrandingItem {
+	if x != nil {
+		return x.Sites
+	}
+	return nil
+}
+
+func (x *ListSiteBrandingReply) GetSnapshotRevision() string {
+	if x != nil {
+		return x.SnapshotRevision
+	}
+	return ""
+}
+
 var File_runtime_proto protoreflect.FileDescriptor
 
 const file_runtime_proto_rawDesc = "" +
@@ -3218,7 +3398,20 @@ const file_runtime_proto_rawDesc = "" +
 	" \x01(\tR\bcurrency\x12*\n" +
 	"\x11effective_from_ms\x18\v \x01(\x03R\x0feffectiveFromMs\x12+\n" +
 	"\x0feffective_to_ms\x18\f \x01(\x03H\x00R\reffectiveToMs\x88\x01\x01B\x12\n" +
-	"\x10_effective_to_ms2\xe8\b\n" +
+	"\x10_effective_to_ms\"\x19\n" +
+	"\x17ListSiteBrandingRequest\"\xeb\x01\n" +
+	"\x10SiteBrandingItem\x12\x17\n" +
+	"\asite_id\x18\x01 \x01(\tR\x06siteId\x12%\n" +
+	"\x0ecanonical_host\x18\x02 \x01(\tR\rcanonicalHost\x12!\n" +
+	"\fdisplay_name\x18\x03 \x01(\tR\vdisplayName\x12\x19\n" +
+	"\blogo_url\x18\x04 \x01(\tR\alogoUrl\x12,\n" +
+	"\x12home_animation_url\x18\x05 \x01(\tR\x10homeAnimationUrl\x12+\n" +
+	"\x11branding_revision\x18\x06 \x01(\tR\x10brandingRevision\"\x97\x01\n" +
+	"\x15ListSiteBrandingReply\x12\x1d\n" +
+	"\n" +
+	"request_id\x18\x01 \x01(\tR\trequestId\x122\n" +
+	"\x05sites\x18\x02 \x03(\v2\x1c.runtime.v1.SiteBrandingItemR\x05sites\x12+\n" +
+	"\x11snapshot_revision\x18\x03 \x01(\tR\x10snapshotRevision2\xc4\t\n" +
 	"\x0eRuntimeService\x12f\n" +
 	"\x14ExchangeRuntimeToken\x12'.runtime.v1.ExchangeRuntimeTokenRequest\x1a%.runtime.v1.ExchangeRuntimeTokenReply\x12]\n" +
 	"\x13ResolveRegistration\x12&.runtime.v1.ResolveRegistrationRequest\x1a\x1e.runtime.v1.RegistrationIntent\x12\\\n" +
@@ -3234,7 +3427,8 @@ const file_runtime_proto_rawDesc = "" +
 	"\n" +
 	"ListLedger\x12\x1d.runtime.v1.ListLedgerRequest\x1a\x17.runtime.v1.LedgerReply\x12N\n" +
 	"\rGetSkuCatalog\x12 .runtime.v1.GetSkuCatalogRequest\x1a\x1b.runtime.v1.SkuCatalogReply\x12T\n" +
-	"\x0fGetOfferCatalog\x12\".runtime.v1.GetOfferCatalogRequest\x1a\x1d.runtime.v1.OfferCatalogReplyB\vZ\t./runtimeb\x06proto3"
+	"\x0fGetOfferCatalog\x12\".runtime.v1.GetOfferCatalogRequest\x1a\x1d.runtime.v1.OfferCatalogReply\x12Z\n" +
+	"\x10ListSiteBranding\x12#.runtime.v1.ListSiteBrandingRequest\x1a!.runtime.v1.ListSiteBrandingReplyB\vZ\t./runtimeb\x06proto3"
 
 var (
 	file_runtime_proto_rawDescOnce sync.Once
@@ -3248,7 +3442,7 @@ func file_runtime_proto_rawDescGZIP() []byte {
 	return file_runtime_proto_rawDescData
 }
 
-var file_runtime_proto_msgTypes = make([]protoimpl.MessageInfo, 42)
+var file_runtime_proto_msgTypes = make([]protoimpl.MessageInfo, 45)
 var file_runtime_proto_goTypes = []any{
 	(*ExchangeRuntimeTokenRequest)(nil),    // 0: runtime.v1.ExchangeRuntimeTokenRequest
 	(*ExchangeRuntimeTokenReply)(nil),      // 1: runtime.v1.ExchangeRuntimeTokenReply
@@ -3291,11 +3485,14 @@ var file_runtime_proto_goTypes = []any{
 	(*GetOfferCatalogRequest)(nil),         // 38: runtime.v1.GetOfferCatalogRequest
 	(*OfferCatalogReply)(nil),              // 39: runtime.v1.OfferCatalogReply
 	(*OfferCatalogItem)(nil),               // 40: runtime.v1.OfferCatalogItem
-	nil,                                    // 41: runtime.v1.VerifyAndConfirmPaymentRequest.SignedHeadersEntry
+	(*ListSiteBrandingRequest)(nil),        // 41: runtime.v1.ListSiteBrandingRequest
+	(*SiteBrandingItem)(nil),               // 42: runtime.v1.SiteBrandingItem
+	(*ListSiteBrandingReply)(nil),          // 43: runtime.v1.ListSiteBrandingReply
+	nil,                                    // 44: runtime.v1.VerifyAndConfirmPaymentRequest.SignedHeadersEntry
 }
 var file_runtime_proto_depIdxs = []int32{
 	6,  // 0: runtime.v1.RegistrationReply.registration_grant:type_name -> runtime.v1.RegistrationGrant
-	41, // 1: runtime.v1.VerifyAndConfirmPaymentRequest.signed_headers:type_name -> runtime.v1.VerifyAndConfirmPaymentRequest.SignedHeadersEntry
+	44, // 1: runtime.v1.VerifyAndConfirmPaymentRequest.signed_headers:type_name -> runtime.v1.VerifyAndConfirmPaymentRequest.SignedHeadersEntry
 	13, // 2: runtime.v1.VerifyAndConfirmPaymentReply.order:type_name -> runtime.v1.Order
 	14, // 3: runtime.v1.VerifyAndConfirmPaymentReply.grant:type_name -> runtime.v1.RetailGrant
 	15, // 4: runtime.v1.VerifyAndConfirmPaymentReply.grant_plan:type_name -> runtime.v1.GrantPlan
@@ -3313,37 +3510,40 @@ var file_runtime_proto_depIdxs = []int32{
 	34, // 16: runtime.v1.PerImagePrice.tiers:type_name -> runtime.v1.PerImageTier
 	36, // 17: runtime.v1.PerSecondPrice.tiers:type_name -> runtime.v1.PerSecondTier
 	40, // 18: runtime.v1.OfferCatalogReply.offers:type_name -> runtime.v1.OfferCatalogItem
-	0,  // 19: runtime.v1.RuntimeService.ExchangeRuntimeToken:input_type -> runtime.v1.ExchangeRuntimeTokenRequest
-	2,  // 20: runtime.v1.RuntimeService.ResolveRegistration:input_type -> runtime.v1.ResolveRegistrationRequest
-	4,  // 21: runtime.v1.RuntimeService.ConfirmRegistration:input_type -> runtime.v1.ConfirmRegistrationRequest
-	7,  // 22: runtime.v1.RuntimeService.CreateOrder:input_type -> runtime.v1.CreateOrderRequest
-	9,  // 23: runtime.v1.RuntimeService.VerifyAndConfirmPayment:input_type -> runtime.v1.VerifyAndConfirmPaymentRequest
-	11, // 24: runtime.v1.RuntimeService.GetOrder:input_type -> runtime.v1.GetOrderRequest
-	16, // 25: runtime.v1.RuntimeService.SyncIdentity:input_type -> runtime.v1.SyncIdentityRequest
-	17, // 26: runtime.v1.RuntimeService.SyncVerificationStatus:input_type -> runtime.v1.SyncVerificationStatusRequest
-	18, // 27: runtime.v1.RuntimeService.DisableIdentity:input_type -> runtime.v1.DisableIdentityRequest
-	20, // 28: runtime.v1.RuntimeService.GetBalance:input_type -> runtime.v1.GetBalanceRequest
-	22, // 29: runtime.v1.RuntimeService.ListLedger:input_type -> runtime.v1.ListLedgerRequest
-	25, // 30: runtime.v1.RuntimeService.GetSkuCatalog:input_type -> runtime.v1.GetSkuCatalogRequest
-	38, // 31: runtime.v1.RuntimeService.GetOfferCatalog:input_type -> runtime.v1.GetOfferCatalogRequest
-	1,  // 32: runtime.v1.RuntimeService.ExchangeRuntimeToken:output_type -> runtime.v1.ExchangeRuntimeTokenReply
-	3,  // 33: runtime.v1.RuntimeService.ResolveRegistration:output_type -> runtime.v1.RegistrationIntent
-	5,  // 34: runtime.v1.RuntimeService.ConfirmRegistration:output_type -> runtime.v1.RegistrationReply
-	8,  // 35: runtime.v1.RuntimeService.CreateOrder:output_type -> runtime.v1.CreateOrderReply
-	10, // 36: runtime.v1.RuntimeService.VerifyAndConfirmPayment:output_type -> runtime.v1.VerifyAndConfirmPaymentReply
-	12, // 37: runtime.v1.RuntimeService.GetOrder:output_type -> runtime.v1.GetOrderReply
-	19, // 38: runtime.v1.RuntimeService.SyncIdentity:output_type -> runtime.v1.IdentityReply
-	19, // 39: runtime.v1.RuntimeService.SyncVerificationStatus:output_type -> runtime.v1.IdentityReply
-	19, // 40: runtime.v1.RuntimeService.DisableIdentity:output_type -> runtime.v1.IdentityReply
-	21, // 41: runtime.v1.RuntimeService.GetBalance:output_type -> runtime.v1.BalanceReply
-	23, // 42: runtime.v1.RuntimeService.ListLedger:output_type -> runtime.v1.LedgerReply
-	26, // 43: runtime.v1.RuntimeService.GetSkuCatalog:output_type -> runtime.v1.SkuCatalogReply
-	39, // 44: runtime.v1.RuntimeService.GetOfferCatalog:output_type -> runtime.v1.OfferCatalogReply
-	32, // [32:45] is the sub-list for method output_type
-	19, // [19:32] is the sub-list for method input_type
-	19, // [19:19] is the sub-list for extension type_name
-	19, // [19:19] is the sub-list for extension extendee
-	0,  // [0:19] is the sub-list for field type_name
+	42, // 19: runtime.v1.ListSiteBrandingReply.sites:type_name -> runtime.v1.SiteBrandingItem
+	0,  // 20: runtime.v1.RuntimeService.ExchangeRuntimeToken:input_type -> runtime.v1.ExchangeRuntimeTokenRequest
+	2,  // 21: runtime.v1.RuntimeService.ResolveRegistration:input_type -> runtime.v1.ResolveRegistrationRequest
+	4,  // 22: runtime.v1.RuntimeService.ConfirmRegistration:input_type -> runtime.v1.ConfirmRegistrationRequest
+	7,  // 23: runtime.v1.RuntimeService.CreateOrder:input_type -> runtime.v1.CreateOrderRequest
+	9,  // 24: runtime.v1.RuntimeService.VerifyAndConfirmPayment:input_type -> runtime.v1.VerifyAndConfirmPaymentRequest
+	11, // 25: runtime.v1.RuntimeService.GetOrder:input_type -> runtime.v1.GetOrderRequest
+	16, // 26: runtime.v1.RuntimeService.SyncIdentity:input_type -> runtime.v1.SyncIdentityRequest
+	17, // 27: runtime.v1.RuntimeService.SyncVerificationStatus:input_type -> runtime.v1.SyncVerificationStatusRequest
+	18, // 28: runtime.v1.RuntimeService.DisableIdentity:input_type -> runtime.v1.DisableIdentityRequest
+	20, // 29: runtime.v1.RuntimeService.GetBalance:input_type -> runtime.v1.GetBalanceRequest
+	22, // 30: runtime.v1.RuntimeService.ListLedger:input_type -> runtime.v1.ListLedgerRequest
+	25, // 31: runtime.v1.RuntimeService.GetSkuCatalog:input_type -> runtime.v1.GetSkuCatalogRequest
+	38, // 32: runtime.v1.RuntimeService.GetOfferCatalog:input_type -> runtime.v1.GetOfferCatalogRequest
+	41, // 33: runtime.v1.RuntimeService.ListSiteBranding:input_type -> runtime.v1.ListSiteBrandingRequest
+	1,  // 34: runtime.v1.RuntimeService.ExchangeRuntimeToken:output_type -> runtime.v1.ExchangeRuntimeTokenReply
+	3,  // 35: runtime.v1.RuntimeService.ResolveRegistration:output_type -> runtime.v1.RegistrationIntent
+	5,  // 36: runtime.v1.RuntimeService.ConfirmRegistration:output_type -> runtime.v1.RegistrationReply
+	8,  // 37: runtime.v1.RuntimeService.CreateOrder:output_type -> runtime.v1.CreateOrderReply
+	10, // 38: runtime.v1.RuntimeService.VerifyAndConfirmPayment:output_type -> runtime.v1.VerifyAndConfirmPaymentReply
+	12, // 39: runtime.v1.RuntimeService.GetOrder:output_type -> runtime.v1.GetOrderReply
+	19, // 40: runtime.v1.RuntimeService.SyncIdentity:output_type -> runtime.v1.IdentityReply
+	19, // 41: runtime.v1.RuntimeService.SyncVerificationStatus:output_type -> runtime.v1.IdentityReply
+	19, // 42: runtime.v1.RuntimeService.DisableIdentity:output_type -> runtime.v1.IdentityReply
+	21, // 43: runtime.v1.RuntimeService.GetBalance:output_type -> runtime.v1.BalanceReply
+	23, // 44: runtime.v1.RuntimeService.ListLedger:output_type -> runtime.v1.LedgerReply
+	26, // 45: runtime.v1.RuntimeService.GetSkuCatalog:output_type -> runtime.v1.SkuCatalogReply
+	39, // 46: runtime.v1.RuntimeService.GetOfferCatalog:output_type -> runtime.v1.OfferCatalogReply
+	43, // 47: runtime.v1.RuntimeService.ListSiteBranding:output_type -> runtime.v1.ListSiteBrandingReply
+	34, // [34:48] is the sub-list for method output_type
+	20, // [20:34] is the sub-list for method input_type
+	20, // [20:20] is the sub-list for extension type_name
+	20, // [20:20] is the sub-list for extension extendee
+	0,  // [0:20] is the sub-list for field type_name
 }
 
 func init() { file_runtime_proto_init() }
@@ -3368,7 +3568,7 @@ func file_runtime_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_runtime_proto_rawDesc), len(file_runtime_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   42,
+			NumMessages:   45,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

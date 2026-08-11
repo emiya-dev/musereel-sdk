@@ -32,6 +32,8 @@ service RuntimeService {
   rpc GetSkuCatalog(GetSkuCatalogRequest) returns (SkuCatalogReply);
   // GetOfferCatalog 返回当前生效的公开 Offer 售价目录。
   rpc GetOfferCatalog(GetOfferCatalogRequest) returns (OfferCatalogReply);
+  // 站点品牌引用批量拉取。调用方实例身份从连接凭据解析，请求体不携带身份。
+  rpc ListSiteBranding(ListSiteBrandingRequest) returns (ListSiteBrandingReply);
 }
 
 message ExchangeRuntimeTokenRequest {}
@@ -338,4 +340,24 @@ message OfferCatalogItem {
   string currency = 10;
   int64 effective_from_ms = 11;
   optional int64 effective_to_ms = 12;
+}
+
+message ListSiteBrandingRequest {
+  // 故意为空：实例身份**只能**来自连接凭据。
+  // 若将来加分页，也绝不加 instance_id / tenant_id 字段。
+}
+
+message SiteBrandingItem {
+  string site_id            = 1;  // 站点稳定标识
+  string canonical_host     = 2;  // 公有入口主机名，工作台按此匹配请求 Host
+  string display_name       = 3;  // 站点显示名
+  string logo_url           = 4;  // 未配置时为空字符串，不是 error
+  string home_animation_url = 5;  // 未配置时为空字符串，不是 error
+  string branding_revision  = 6;  // 品牌内容版本；变化即内容有变
+}
+
+message ListSiteBrandingReply {
+  string request_id                = 1;
+  repeated SiteBrandingItem sites  = 2;
+  string snapshot_revision         = 3;  // 整批快照版本，供工作台跳过无变化的刷新
 }
