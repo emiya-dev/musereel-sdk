@@ -33,14 +33,16 @@ var runtimeMethods = map[string]struct{}{
 	"ListLedger":              {},
 	"GetSkuCatalog":           {},
 	"GetOfferCatalog":         {},
+	"ListSiteBranding":        {},
 }
 
 var runtimeQueryMethods = map[string]struct{}{
-	"GetOrder":        {},
-	"GetBalance":      {},
-	"ListLedger":      {},
-	"GetSkuCatalog":   {},
-	"GetOfferCatalog": {},
+	"GetOrder":         {},
+	"GetBalance":       {},
+	"ListLedger":       {},
+	"GetSkuCatalog":    {},
+	"GetOfferCatalog":  {},
+	"ListSiteBranding": {},
 }
 
 var runtimeAssertionOperations = map[string]string{

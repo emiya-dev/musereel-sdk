@@ -436,6 +436,20 @@ func (client *RuntimeClient) GetOfferCatalog(ctx context.Context, options ...grp
 	return reply, nil
 }
 
+// ListSiteBranding 请求空 protobuf message，使用 Bearer 但不生成 assertion。
+//
+// 它是实例级查询（返回本实例全部站点的品牌引用），契约上不携带 actor assertion，
+// 因此与两个 catalog 同型：登记进 runtimeMethods 与 runtimeQueryMethods，
+// 但不进 runtimeAssertionOperations。
+func (client *RuntimeClient) ListSiteBranding(ctx context.Context, options ...grpc.CallOption) (*runtimepb.ListSiteBrandingReply, error) {
+	reply := new(runtimepb.ListSiteBrandingReply)
+	request := &runtimepb.ListSiteBrandingRequest{}
+	if err := client.invokeAuthenticated(ctx, runtimepb.RuntimeService_ListSiteBranding_FullMethodName, request, reply, options...); err != nil {
+		return nil, err
+	}
+	return reply, nil
+}
+
 type runtimeAssertionIdentity func() (actor, idempotencyKey string, body []byte, err error)
 
 func (client *RuntimeClient) invokeAssertion(

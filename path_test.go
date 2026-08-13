@@ -112,11 +112,49 @@ func TestRuntimeMethodsWithoutAssertionsRejectOperations(t *testing.T) {
 		"DisableIdentity",
 		"GetSkuCatalog",
 		"GetOfferCatalog",
+		"ListSiteBranding",
 	} {
 		path := "/runtime.v1.RuntimeService/" + method
 		if err := validateOperationAndMethod("POST", path, "anything"); err == nil {
 			t.Errorf("operation accepted for runtime method without assertion: %s", method)
 		}
+	}
+}
+
+// TestListSiteBrandingIsRegisteredAsQueryMethod 钉住 ListSiteBranding 的两处登记
+// **确实产生行为**，而不只是躺在 map 里的装饰字符串。
+//
+// 两处登记各有一个可观察后果：runtimeMethods 决定路径白名单放不放行，
+// runtimeQueryMethods 决定幂等键是不是被禁（查询类不得携带）。
+// 消融实测（2026-08-13）：同时删掉两行后，下面 ① 与 ② 立刻变红。
+//
+// ③④ 是对照组，缺了它们前两条的绿没有判别力——③ 证明 forbidden 不是恒真，
+// ④ 证明路径白名单不是恒放行。
+func TestListSiteBrandingIsRegisteredAsQueryMethod(t *testing.T) {
+	const path = "/runtime.v1.RuntimeService/ListSiteBranding"
+
+	// ① 已登记进 runtimeMethods：规范路径校验放行。
+	if err := ValidateCanonicalPath(path); err != nil {
+		t.Errorf("ListSiteBranding 未登记进 runtimeMethods: %v", err)
+	}
+
+	// ② 已登记进 runtimeQueryMethods：查询方法禁止携带幂等键。
+	required, forbidden := idempotencyRule("POST", path)
+	if required {
+		t.Errorf("查询方法不应要求幂等键")
+	}
+	if !forbidden {
+		t.Errorf("ListSiteBranding 未登记进 runtimeQueryMethods，幂等键没有被禁")
+	}
+
+	// ③ 对照：写方法不在查询表里，forbidden 必须为 false。
+	if _, writeForbidden := idempotencyRule("POST", "/runtime.v1.RuntimeService/SyncIdentity"); writeForbidden {
+		t.Errorf("对照组失效：写方法也被判 forbidden，②的绿没有判别力")
+	}
+
+	// ④ 对照：未登记的方法必须仍被拒，证明白名单不是恒放行。
+	if err := ValidateCanonicalPath("/runtime.v1.RuntimeService/NotARealMethod"); err == nil {
+		t.Errorf("对照组失效：未登记方法被放行，①的绿没有判别力")
 	}
 }
 
