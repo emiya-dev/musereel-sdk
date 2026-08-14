@@ -37,6 +37,26 @@ The rule applies to the full contract, including behavior that is not encoded
 by protobuf wire format. Before making a change, classify it as compatible or
 breaking and select the matching runtime version or HTTP path.
 
+### Pre-launch exception log
+
+The rule above is suspended only by an explicit, dated owner decision recorded
+here. An undocumented breaking change in `runtime.v1` is still a failed change.
+
+- **2026-08-14 — `SiteBrandingItem` drops `logo_url` (4) and
+  `home_animation_url` (5), adds `assets` (7).** Site branding moved to five
+  closed kind slots in Sluice (`site_branding_asset`); the two named columns
+  were deleted rather than kept as compatibility fields. Owner approved
+  removing them inside `runtime.v1` instead of opening `runtime.v2`.
+  **Why the rule did not bite here:** neither Sluice nor the workbench has
+  launched, `runtime.v1` has no external consumer, and its only consumer is our
+  own workbench, which had not yet raised its pin. The compatibility this rule
+  protects did not exist yet, while a `v2` split would have cost a duplicated
+  package and an import-path migration for zero real benefit. Both tags are
+  `reserved`, so the wire format stays unambiguous.
+  **The exception is one-off and expires at launch:** once the workbench runs
+  against a released Sluice, breaking changes go to `runtime.v2` as written
+  above. Do not cite this entry as precedent for a post-launch removal.
+
 ## Local gate
 
 The required SDK-001 gate is:

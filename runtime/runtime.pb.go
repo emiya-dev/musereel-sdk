@@ -2989,12 +2989,11 @@ func (*ListSiteBrandingRequest) Descriptor() ([]byte, []int) {
 
 type SiteBrandingItem struct {
 	state            protoimpl.MessageState `protogen:"open.v1"`
-	SiteId           string                 `protobuf:"bytes,1,opt,name=site_id,json=siteId,proto3" json:"site_id,omitempty"`                                 // 站点稳定标识
-	CanonicalHost    string                 `protobuf:"bytes,2,opt,name=canonical_host,json=canonicalHost,proto3" json:"canonical_host,omitempty"`            // 公有入口主机名，工作台按此匹配请求 Host
-	DisplayName      string                 `protobuf:"bytes,3,opt,name=display_name,json=displayName,proto3" json:"display_name,omitempty"`                  // 站点显示名
-	LogoUrl          string                 `protobuf:"bytes,4,opt,name=logo_url,json=logoUrl,proto3" json:"logo_url,omitempty"`                              // 未配置时为空字符串，不是 error
-	HomeAnimationUrl string                 `protobuf:"bytes,5,opt,name=home_animation_url,json=homeAnimationUrl,proto3" json:"home_animation_url,omitempty"` // 未配置时为空字符串，不是 error
-	BrandingRevision string                 `protobuf:"bytes,6,opt,name=branding_revision,json=brandingRevision,proto3" json:"branding_revision,omitempty"`   // 品牌内容版本；变化即内容有变
+	SiteId           string                 `protobuf:"bytes,1,opt,name=site_id,json=siteId,proto3" json:"site_id,omitempty"`                                                             // 站点稳定标识
+	CanonicalHost    string                 `protobuf:"bytes,2,opt,name=canonical_host,json=canonicalHost,proto3" json:"canonical_host,omitempty"`                                        // 公有入口主机名，工作台按此匹配请求 Host
+	DisplayName      string                 `protobuf:"bytes,3,opt,name=display_name,json=displayName,proto3" json:"display_name,omitempty"`                                              // 站点显示名
+	BrandingRevision string                 `protobuf:"bytes,6,opt,name=branding_revision,json=brandingRevision,proto3" json:"branding_revision,omitempty"`                               // 品牌内容版本；变化即内容有变
+	Assets           map[string]string      `protobuf:"bytes,7,rep,name=assets,proto3" json:"assets,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"` // 只含已配置的品牌资产槽位
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache
 }
@@ -3050,25 +3049,18 @@ func (x *SiteBrandingItem) GetDisplayName() string {
 	return ""
 }
 
-func (x *SiteBrandingItem) GetLogoUrl() string {
-	if x != nil {
-		return x.LogoUrl
-	}
-	return ""
-}
-
-func (x *SiteBrandingItem) GetHomeAnimationUrl() string {
-	if x != nil {
-		return x.HomeAnimationUrl
-	}
-	return ""
-}
-
 func (x *SiteBrandingItem) GetBrandingRevision() string {
 	if x != nil {
 		return x.BrandingRevision
 	}
 	return ""
+}
+
+func (x *SiteBrandingItem) GetAssets() map[string]string {
+	if x != nil {
+		return x.Assets
+	}
+	return nil
 }
 
 type ListSiteBrandingReply struct {
@@ -3399,14 +3391,16 @@ const file_runtime_proto_rawDesc = "" +
 	"\x11effective_from_ms\x18\v \x01(\x03R\x0feffectiveFromMs\x12+\n" +
 	"\x0feffective_to_ms\x18\f \x01(\x03H\x00R\reffectiveToMs\x88\x01\x01B\x12\n" +
 	"\x10_effective_to_ms\"\x19\n" +
-	"\x17ListSiteBrandingRequest\"\xeb\x01\n" +
+	"\x17ListSiteBrandingRequest\"\xc9\x02\n" +
 	"\x10SiteBrandingItem\x12\x17\n" +
 	"\asite_id\x18\x01 \x01(\tR\x06siteId\x12%\n" +
 	"\x0ecanonical_host\x18\x02 \x01(\tR\rcanonicalHost\x12!\n" +
-	"\fdisplay_name\x18\x03 \x01(\tR\vdisplayName\x12\x19\n" +
-	"\blogo_url\x18\x04 \x01(\tR\alogoUrl\x12,\n" +
-	"\x12home_animation_url\x18\x05 \x01(\tR\x10homeAnimationUrl\x12+\n" +
-	"\x11branding_revision\x18\x06 \x01(\tR\x10brandingRevision\"\x97\x01\n" +
+	"\fdisplay_name\x18\x03 \x01(\tR\vdisplayName\x12+\n" +
+	"\x11branding_revision\x18\x06 \x01(\tR\x10brandingRevision\x12@\n" +
+	"\x06assets\x18\a \x03(\v2(.runtime.v1.SiteBrandingItem.AssetsEntryR\x06assets\x1a9\n" +
+	"\vAssetsEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01J\x04\b\x04\x10\x05J\x04\b\x05\x10\x06R\blogo_urlR\x12home_animation_url\"\x97\x01\n" +
 	"\x15ListSiteBrandingReply\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x01 \x01(\tR\trequestId\x122\n" +
@@ -3442,7 +3436,7 @@ func file_runtime_proto_rawDescGZIP() []byte {
 	return file_runtime_proto_rawDescData
 }
 
-var file_runtime_proto_msgTypes = make([]protoimpl.MessageInfo, 45)
+var file_runtime_proto_msgTypes = make([]protoimpl.MessageInfo, 46)
 var file_runtime_proto_goTypes = []any{
 	(*ExchangeRuntimeTokenRequest)(nil),    // 0: runtime.v1.ExchangeRuntimeTokenRequest
 	(*ExchangeRuntimeTokenReply)(nil),      // 1: runtime.v1.ExchangeRuntimeTokenReply
@@ -3489,6 +3483,7 @@ var file_runtime_proto_goTypes = []any{
 	(*SiteBrandingItem)(nil),               // 42: runtime.v1.SiteBrandingItem
 	(*ListSiteBrandingReply)(nil),          // 43: runtime.v1.ListSiteBrandingReply
 	nil,                                    // 44: runtime.v1.VerifyAndConfirmPaymentRequest.SignedHeadersEntry
+	nil,                                    // 45: runtime.v1.SiteBrandingItem.AssetsEntry
 }
 var file_runtime_proto_depIdxs = []int32{
 	6,  // 0: runtime.v1.RegistrationReply.registration_grant:type_name -> runtime.v1.RegistrationGrant
@@ -3510,40 +3505,41 @@ var file_runtime_proto_depIdxs = []int32{
 	34, // 16: runtime.v1.PerImagePrice.tiers:type_name -> runtime.v1.PerImageTier
 	36, // 17: runtime.v1.PerSecondPrice.tiers:type_name -> runtime.v1.PerSecondTier
 	40, // 18: runtime.v1.OfferCatalogReply.offers:type_name -> runtime.v1.OfferCatalogItem
-	42, // 19: runtime.v1.ListSiteBrandingReply.sites:type_name -> runtime.v1.SiteBrandingItem
-	0,  // 20: runtime.v1.RuntimeService.ExchangeRuntimeToken:input_type -> runtime.v1.ExchangeRuntimeTokenRequest
-	2,  // 21: runtime.v1.RuntimeService.ResolveRegistration:input_type -> runtime.v1.ResolveRegistrationRequest
-	4,  // 22: runtime.v1.RuntimeService.ConfirmRegistration:input_type -> runtime.v1.ConfirmRegistrationRequest
-	7,  // 23: runtime.v1.RuntimeService.CreateOrder:input_type -> runtime.v1.CreateOrderRequest
-	9,  // 24: runtime.v1.RuntimeService.VerifyAndConfirmPayment:input_type -> runtime.v1.VerifyAndConfirmPaymentRequest
-	11, // 25: runtime.v1.RuntimeService.GetOrder:input_type -> runtime.v1.GetOrderRequest
-	16, // 26: runtime.v1.RuntimeService.SyncIdentity:input_type -> runtime.v1.SyncIdentityRequest
-	17, // 27: runtime.v1.RuntimeService.SyncVerificationStatus:input_type -> runtime.v1.SyncVerificationStatusRequest
-	18, // 28: runtime.v1.RuntimeService.DisableIdentity:input_type -> runtime.v1.DisableIdentityRequest
-	20, // 29: runtime.v1.RuntimeService.GetBalance:input_type -> runtime.v1.GetBalanceRequest
-	22, // 30: runtime.v1.RuntimeService.ListLedger:input_type -> runtime.v1.ListLedgerRequest
-	25, // 31: runtime.v1.RuntimeService.GetSkuCatalog:input_type -> runtime.v1.GetSkuCatalogRequest
-	38, // 32: runtime.v1.RuntimeService.GetOfferCatalog:input_type -> runtime.v1.GetOfferCatalogRequest
-	41, // 33: runtime.v1.RuntimeService.ListSiteBranding:input_type -> runtime.v1.ListSiteBrandingRequest
-	1,  // 34: runtime.v1.RuntimeService.ExchangeRuntimeToken:output_type -> runtime.v1.ExchangeRuntimeTokenReply
-	3,  // 35: runtime.v1.RuntimeService.ResolveRegistration:output_type -> runtime.v1.RegistrationIntent
-	5,  // 36: runtime.v1.RuntimeService.ConfirmRegistration:output_type -> runtime.v1.RegistrationReply
-	8,  // 37: runtime.v1.RuntimeService.CreateOrder:output_type -> runtime.v1.CreateOrderReply
-	10, // 38: runtime.v1.RuntimeService.VerifyAndConfirmPayment:output_type -> runtime.v1.VerifyAndConfirmPaymentReply
-	12, // 39: runtime.v1.RuntimeService.GetOrder:output_type -> runtime.v1.GetOrderReply
-	19, // 40: runtime.v1.RuntimeService.SyncIdentity:output_type -> runtime.v1.IdentityReply
-	19, // 41: runtime.v1.RuntimeService.SyncVerificationStatus:output_type -> runtime.v1.IdentityReply
-	19, // 42: runtime.v1.RuntimeService.DisableIdentity:output_type -> runtime.v1.IdentityReply
-	21, // 43: runtime.v1.RuntimeService.GetBalance:output_type -> runtime.v1.BalanceReply
-	23, // 44: runtime.v1.RuntimeService.ListLedger:output_type -> runtime.v1.LedgerReply
-	26, // 45: runtime.v1.RuntimeService.GetSkuCatalog:output_type -> runtime.v1.SkuCatalogReply
-	39, // 46: runtime.v1.RuntimeService.GetOfferCatalog:output_type -> runtime.v1.OfferCatalogReply
-	43, // 47: runtime.v1.RuntimeService.ListSiteBranding:output_type -> runtime.v1.ListSiteBrandingReply
-	34, // [34:48] is the sub-list for method output_type
-	20, // [20:34] is the sub-list for method input_type
-	20, // [20:20] is the sub-list for extension type_name
-	20, // [20:20] is the sub-list for extension extendee
-	0,  // [0:20] is the sub-list for field type_name
+	45, // 19: runtime.v1.SiteBrandingItem.assets:type_name -> runtime.v1.SiteBrandingItem.AssetsEntry
+	42, // 20: runtime.v1.ListSiteBrandingReply.sites:type_name -> runtime.v1.SiteBrandingItem
+	0,  // 21: runtime.v1.RuntimeService.ExchangeRuntimeToken:input_type -> runtime.v1.ExchangeRuntimeTokenRequest
+	2,  // 22: runtime.v1.RuntimeService.ResolveRegistration:input_type -> runtime.v1.ResolveRegistrationRequest
+	4,  // 23: runtime.v1.RuntimeService.ConfirmRegistration:input_type -> runtime.v1.ConfirmRegistrationRequest
+	7,  // 24: runtime.v1.RuntimeService.CreateOrder:input_type -> runtime.v1.CreateOrderRequest
+	9,  // 25: runtime.v1.RuntimeService.VerifyAndConfirmPayment:input_type -> runtime.v1.VerifyAndConfirmPaymentRequest
+	11, // 26: runtime.v1.RuntimeService.GetOrder:input_type -> runtime.v1.GetOrderRequest
+	16, // 27: runtime.v1.RuntimeService.SyncIdentity:input_type -> runtime.v1.SyncIdentityRequest
+	17, // 28: runtime.v1.RuntimeService.SyncVerificationStatus:input_type -> runtime.v1.SyncVerificationStatusRequest
+	18, // 29: runtime.v1.RuntimeService.DisableIdentity:input_type -> runtime.v1.DisableIdentityRequest
+	20, // 30: runtime.v1.RuntimeService.GetBalance:input_type -> runtime.v1.GetBalanceRequest
+	22, // 31: runtime.v1.RuntimeService.ListLedger:input_type -> runtime.v1.ListLedgerRequest
+	25, // 32: runtime.v1.RuntimeService.GetSkuCatalog:input_type -> runtime.v1.GetSkuCatalogRequest
+	38, // 33: runtime.v1.RuntimeService.GetOfferCatalog:input_type -> runtime.v1.GetOfferCatalogRequest
+	41, // 34: runtime.v1.RuntimeService.ListSiteBranding:input_type -> runtime.v1.ListSiteBrandingRequest
+	1,  // 35: runtime.v1.RuntimeService.ExchangeRuntimeToken:output_type -> runtime.v1.ExchangeRuntimeTokenReply
+	3,  // 36: runtime.v1.RuntimeService.ResolveRegistration:output_type -> runtime.v1.RegistrationIntent
+	5,  // 37: runtime.v1.RuntimeService.ConfirmRegistration:output_type -> runtime.v1.RegistrationReply
+	8,  // 38: runtime.v1.RuntimeService.CreateOrder:output_type -> runtime.v1.CreateOrderReply
+	10, // 39: runtime.v1.RuntimeService.VerifyAndConfirmPayment:output_type -> runtime.v1.VerifyAndConfirmPaymentReply
+	12, // 40: runtime.v1.RuntimeService.GetOrder:output_type -> runtime.v1.GetOrderReply
+	19, // 41: runtime.v1.RuntimeService.SyncIdentity:output_type -> runtime.v1.IdentityReply
+	19, // 42: runtime.v1.RuntimeService.SyncVerificationStatus:output_type -> runtime.v1.IdentityReply
+	19, // 43: runtime.v1.RuntimeService.DisableIdentity:output_type -> runtime.v1.IdentityReply
+	21, // 44: runtime.v1.RuntimeService.GetBalance:output_type -> runtime.v1.BalanceReply
+	23, // 45: runtime.v1.RuntimeService.ListLedger:output_type -> runtime.v1.LedgerReply
+	26, // 46: runtime.v1.RuntimeService.GetSkuCatalog:output_type -> runtime.v1.SkuCatalogReply
+	39, // 47: runtime.v1.RuntimeService.GetOfferCatalog:output_type -> runtime.v1.OfferCatalogReply
+	43, // 48: runtime.v1.RuntimeService.ListSiteBranding:output_type -> runtime.v1.ListSiteBrandingReply
+	35, // [35:49] is the sub-list for method output_type
+	21, // [21:35] is the sub-list for method input_type
+	21, // [21:21] is the sub-list for extension type_name
+	21, // [21:21] is the sub-list for extension extendee
+	0,  // [0:21] is the sub-list for field type_name
 }
 
 func init() { file_runtime_proto_init() }
@@ -3568,7 +3564,7 @@ func file_runtime_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_runtime_proto_rawDesc), len(file_runtime_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   45,
+			NumMessages:   46,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

@@ -351,9 +351,10 @@ message SiteBrandingItem {
   string site_id            = 1;  // 站点稳定标识
   string canonical_host     = 2;  // 公有入口主机名，工作台按此匹配请求 Host
   string display_name       = 3;  // 站点显示名
-  string logo_url           = 4;  // 未配置时为空字符串，不是 error
-  string home_animation_url = 5;  // 未配置时为空字符串，不是 error
+  reserved 4, 5;
+  reserved "logo_url", "home_animation_url";
   string branding_revision  = 6;  // 品牌内容版本；变化即内容有变
+  map<string, string> assets = 7; // 只含已配置的品牌资产槽位
 }
 
 message ListSiteBrandingReply {
