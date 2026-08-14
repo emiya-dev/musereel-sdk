@@ -2992,6 +2992,7 @@ type SiteBrandingItem struct {
 	SiteId           string                 `protobuf:"bytes,1,opt,name=site_id,json=siteId,proto3" json:"site_id,omitempty"`                                                             // 站点稳定标识
 	CanonicalHost    string                 `protobuf:"bytes,2,opt,name=canonical_host,json=canonicalHost,proto3" json:"canonical_host,omitempty"`                                        // 公有入口主机名，工作台按此匹配请求 Host
 	DisplayName      string                 `protobuf:"bytes,3,opt,name=display_name,json=displayName,proto3" json:"display_name,omitempty"`                                              // 站点显示名
+	HomeAnimationUrl string                 `protobuf:"bytes,5,opt,name=home_animation_url,json=homeAnimationUrl,proto3" json:"home_animation_url,omitempty"`                             // 未配置时为空字符串，不是 error
 	BrandingRevision string                 `protobuf:"bytes,6,opt,name=branding_revision,json=brandingRevision,proto3" json:"branding_revision,omitempty"`                               // 品牌内容版本；变化即内容有变
 	Assets           map[string]string      `protobuf:"bytes,7,rep,name=assets,proto3" json:"assets,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"` // 只含已配置的品牌资产槽位
 	unknownFields    protoimpl.UnknownFields
@@ -3045,6 +3046,13 @@ func (x *SiteBrandingItem) GetCanonicalHost() string {
 func (x *SiteBrandingItem) GetDisplayName() string {
 	if x != nil {
 		return x.DisplayName
+	}
+	return ""
+}
+
+func (x *SiteBrandingItem) GetHomeAnimationUrl() string {
+	if x != nil {
+		return x.HomeAnimationUrl
 	}
 	return ""
 }
@@ -3391,16 +3399,17 @@ const file_runtime_proto_rawDesc = "" +
 	"\x11effective_from_ms\x18\v \x01(\x03R\x0feffectiveFromMs\x12+\n" +
 	"\x0feffective_to_ms\x18\f \x01(\x03H\x00R\reffectiveToMs\x88\x01\x01B\x12\n" +
 	"\x10_effective_to_ms\"\x19\n" +
-	"\x17ListSiteBrandingRequest\"\xc9\x02\n" +
+	"\x17ListSiteBrandingRequest\"\xdd\x02\n" +
 	"\x10SiteBrandingItem\x12\x17\n" +
 	"\asite_id\x18\x01 \x01(\tR\x06siteId\x12%\n" +
 	"\x0ecanonical_host\x18\x02 \x01(\tR\rcanonicalHost\x12!\n" +
-	"\fdisplay_name\x18\x03 \x01(\tR\vdisplayName\x12+\n" +
+	"\fdisplay_name\x18\x03 \x01(\tR\vdisplayName\x12,\n" +
+	"\x12home_animation_url\x18\x05 \x01(\tR\x10homeAnimationUrl\x12+\n" +
 	"\x11branding_revision\x18\x06 \x01(\tR\x10brandingRevision\x12@\n" +
 	"\x06assets\x18\a \x03(\v2(.runtime.v1.SiteBrandingItem.AssetsEntryR\x06assets\x1a9\n" +
 	"\vAssetsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01J\x04\b\x04\x10\x05J\x04\b\x05\x10\x06R\blogo_urlR\x12home_animation_url\"\x97\x01\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01J\x04\b\x04\x10\x05R\blogo_url\"\x97\x01\n" +
 	"\x15ListSiteBrandingReply\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x01 \x01(\tR\trequestId\x122\n" +
