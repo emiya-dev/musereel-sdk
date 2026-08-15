@@ -454,6 +454,8 @@ func TestRuntimeRetryableMetadataHasThreeStates(t *testing.T) {
 		{name: "explicit false", stableCode: "runtime_forbidden", grpcCode: codes.PermissionDenied, metadata: map[string]string{"retryable": "false"}, want: false},
 		{name: "unflagged insufficient quota", stableCode: "insufficient_quota", grpcCode: codes.Aborted, metadata: map[string]string{}, want: false},
 		{name: "missing flag uses sdk fallback", stableCode: RuntimeRegistrationUnavailable, grpcCode: codes.Unavailable, metadata: map[string]string{}, want: true},
+		{name: "registration code not found is never retryable", stableCode: RuntimeRegistrationCodeNotFound, grpcCode: codes.InvalidArgument, metadata: map[string]string{"retryable": "true"}, want: false},
+		{name: "registration code merchant mismatch is never retryable", stableCode: RuntimeRegistrationCodeMerchantMismatch, grpcCode: codes.InvalidArgument, metadata: map[string]string{"retryable": "true"}, want: false},
 	}
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -680,13 +682,19 @@ func (connection *runtimeErrorConn) NewStream(context.Context, *grpc.StreamDesc,
 
 func TestRuntimeStableErrorMappingDoesNotAddRetry(t *testing.T) {
 	testCases := []struct {
-		name    string
-		err     error
-		rawCode string
+		name          string
+		err           error
+		rawCode       string
+		wantCode      string
+		wantStatus    codes.Code
+		wantRetryable bool
 	}{
 		{
-			name:    "ErrorInfo details",
-			rawCode: RuntimeRegistrationUnavailable,
+			name:          "registration unavailable ErrorInfo details",
+			rawCode:       RuntimeRegistrationUnavailable,
+			wantCode:      RuntimeRegistrationUnavailable,
+			wantStatus:    codes.Unavailable,
+			wantRetryable: true,
 			err: runtimeErrorStatus(
 				codes.Unknown,
 				"服务暂时不可用",
@@ -696,8 +704,39 @@ func TestRuntimeStableErrorMappingDoesNotAddRetry(t *testing.T) {
 			),
 		},
 		{
-			name: "legacy message prefix",
-			err:  status.Error(codes.Unknown, RuntimeRegistrationUnavailable+": temporarily unavailable"),
+			name:          "registration unavailable legacy message prefix",
+			wantCode:      RuntimeRegistrationUnavailable,
+			wantStatus:    codes.Unavailable,
+			wantRetryable: true,
+			err:           status.Error(codes.Unknown, RuntimeRegistrationUnavailable+": temporarily unavailable"),
+		},
+		{
+			name:          "registration code not found ErrorInfo details",
+			rawCode:       RuntimeRegistrationCodeNotFound,
+			wantCode:      RuntimeRegistrationCodeNotFound,
+			wantStatus:    codes.InvalidArgument,
+			wantRetryable: false,
+			err: runtimeErrorStatus(
+				codes.Unknown,
+				"邀请码不存在",
+				"registration_code_not_found",
+				testRuntimeErrorDomain,
+				map[string]string{"retryable": "false"},
+			),
+		},
+		{
+			name:          "registration code merchant mismatch ErrorInfo details",
+			rawCode:       RuntimeRegistrationCodeMerchantMismatch,
+			wantCode:      RuntimeRegistrationCodeMerchantMismatch,
+			wantStatus:    codes.InvalidArgument,
+			wantRetryable: false,
+			err: runtimeErrorStatus(
+				codes.Unknown,
+				"邀请码不属于本站点所属商户",
+				"registration_code_merchant_mismatch",
+				testRuntimeErrorDomain,
+				map[string]string{"retryable": "false"},
+			),
 		},
 	}
 	legacyAuthentication := status.Error(codes.Unauthenticated, RuntimeUnauthenticated+": legacy compatibility")
@@ -717,12 +756,12 @@ func TestRuntimeStableErrorMappingDoesNotAddRetry(t *testing.T) {
 			if err == nil {
 				t.Fatal("ResolveRegistration unexpectedly succeeded")
 			}
-			if ErrorCode(err) != RuntimeRegistrationUnavailable || status.Code(err) != codes.Unavailable {
-				t.Fatalf("stable error = %v, code=%q grpc=%s", err, ErrorCode(err), status.Code(err))
+			if ErrorCode(err) != testCase.wantCode || status.Code(err) != testCase.wantStatus {
+				t.Fatalf("stable error = %v, code=%q want=%q grpc=%s want=%s", err, ErrorCode(err), testCase.wantCode, status.Code(err), testCase.wantStatus)
 			}
 			retryable, ok := err.(interface{ Retryable() bool })
-			if !ok || !retryable.Retryable() {
-				t.Fatalf("registration_unavailable retryable = %#v, want true", err)
+			if !ok || retryable.Retryable() != testCase.wantRetryable {
+				t.Fatalf("%s retryable = %#v, want %t", testCase.wantCode, err, testCase.wantRetryable)
 			}
 			if connection.calls.Load() != 1 {
 				t.Fatalf("ResolveRegistration calls = %d, want no SDK retry", connection.calls.Load())

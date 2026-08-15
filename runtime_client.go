@@ -16,6 +16,10 @@ import (
 const (
 	// RuntimeRegistrationUnavailable 是注册解析面可重试的稳定错误码。
 	RuntimeRegistrationUnavailable = "registration_unavailable"
+	// RuntimeRegistrationCodeNotFound 是邀请码不存在且不可重试的稳定错误码。
+	RuntimeRegistrationCodeNotFound = "registration_code_not_found"
+	// RuntimeRegistrationCodeMerchantMismatch 是邀请码与站点所属商户不匹配且不可重试的稳定错误码。
+	RuntimeRegistrationCodeMerchantMismatch = "registration_code_merchant_mismatch"
 	// RuntimeQueryInvalid 是余额、流水等查询请求无效的稳定错误码。
 	RuntimeQueryInvalid = "runtime_query_invalid"
 	// RuntimeSubjectUnavailable 是运行时 subject 暂不可用的稳定错误码。
@@ -159,6 +163,11 @@ func (err *RuntimeRPCError) GRPCStatus() *status.Status {
 //
 // tokens 为 nil 时不会自作主张——那种 client 只能走公有路径，
 // 请求缺 site token 就由服务端 fail-loud，SDK 不替它编一个本地错误。
+//
+// request.InviteCode 仅是渠道标识，不再决定商户归属；在公有路径，商户归属由
+// request.SiteContextToken 推导。邀请码不存在或与站点所属商户不匹配时，服务端分别
+// 返回 RuntimeRegistrationCodeNotFound 或 RuntimeRegistrationCodeMerchantMismatch，
+// 两者都是调用方输入错误，不可重试。
 //
 // registration_unavailable 的服务端响应应在外部 2 秒总预算内最多重试一次；
 // SDK 不内建该重试。
@@ -619,6 +628,18 @@ func normalizeRuntimeError(err error) error {
 }
 
 func runtimeRetryable(err error, code string) bool {
+	// 这两个码先于 metadata 判定，是本函数里唯一「SDK 覆盖服务端信号」的位置，
+	// 因此要说清为什么它们与下面那些码不同：它们描述的是**分类事实**——调用方给的
+	// 邀请码不存在、或不属于本站点所属商户，是请求本身错了，重试同一个请求永远不会
+	// 变成对的。而 registration_unavailable 之流描述的是**运行时状态**，服务端最清楚
+	// 此刻能不能再试，所以那些码让 metadata 说了算。
+	// ⇒ 服务端即使误发 retryable=true，也不能让调用方对一个永不成功的输入反复重试。
+	// 对应用例见 TestRuntimeRetryableMetadataHasThreeStates 里那两条 metadata 为
+	// "true" 而 want 为 false 的行；删掉本 switch 它们会立刻变红（已实测）。
+	switch code {
+	case RuntimeRegistrationCodeNotFound, RuntimeRegistrationCodeMerchantMismatch:
+		return false
+	}
 	if info, ok := runtimeErrorInfo(err); ok {
 		switch info.Metadata["retryable"] {
 		case "true":
@@ -660,6 +681,8 @@ func runtimeStatusCode(stableCode string, fallback codes.Code) codes.Code {
 	switch stableCode {
 	case RuntimeRegistrationUnavailable:
 		return codes.Unavailable
+	case RuntimeRegistrationCodeNotFound, RuntimeRegistrationCodeMerchantMismatch:
+		return codes.InvalidArgument
 	case RuntimeQueryInvalid:
 		return codes.InvalidArgument
 	case RuntimeSubjectUnavailable:
