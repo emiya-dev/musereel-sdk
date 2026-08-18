@@ -11,6 +11,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -523,17 +524,35 @@ func runGateway(ctx context.Context, cfg config, client *sdk.GatewayClient) erro
 	if stream != nil {
 		defer stream.Close()
 	}
-	cancel, err := client.Cancel(ctx, cancelID, conformanceKey("cancel-request"))
+	cancel, cancelErr := client.Cancel(ctx, cancelID, conformanceKey("cancel-request"))
+	cancelMarker, err := cancelLegMarker(cfg.skuID, cancel, cancelErr)
 	if err != nil {
 		return fmt.Errorf("gateway cancel 失败: %w", err)
 	}
-	if cancel.StatusCode != http.StatusAccepted && cancel.StatusCode != http.StatusOK {
-		return fmt.Errorf("gateway cancel status=%d，不在 202/200 封闭集", cancel.StatusCode)
-	}
-	if cancel.StatusCode == http.StatusAccepted && !cancel.Accepted {
-		return fmt.Errorf("gateway cancel 202 未暴露 Accepted")
-	}
+	fmt.Println(cancelMarker)
 	return nil
+}
+
+// cancelLegMarker 把 cancel 腿的两种合法结果收敛为机器可读标记。
+// 已终态调用返回 409/transition-conflict 时，竞态本身是合法结果；其它错误
+// 仍必须失败，避免把未验证的 cancel 结果当成 conformance 通过。
+func cancelLegMarker(skuID string, response sdk.GatewayCancelResponse, cancelErr error) (string, error) {
+	if cancelErr != nil {
+		var gatewayErr *sdk.GatewayError
+		if errors.As(cancelErr, &gatewayErr) && gatewayErr != nil &&
+			gatewayErr.HTTPStatus == http.StatusConflict &&
+			gatewayErr.Code == sdk.GatewayInvocationTransitionConflict {
+			return fmt.Sprintf("CANCEL_LEG=already_terminal sku=%s", skuID), nil
+		}
+		return "", cancelErr
+	}
+	if response.StatusCode != http.StatusAccepted && response.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("gateway cancel status=%d，不在 202/200 封闭集", response.StatusCode)
+	}
+	if response.StatusCode == http.StatusAccepted && !response.Accepted {
+		return "", fmt.Errorf("gateway cancel 202 未暴露 Accepted")
+	}
+	return fmt.Sprintf("CANCEL_LEG=accepted sku=%s", skuID), nil
 }
 
 // createForMode 使用 SKU 目录指定的 async 或 stream 公开方法。
@@ -749,11 +768,50 @@ func runRuntime(ctx context.Context, cfg config, client *sdk.RuntimeClient, toke
 	if err != nil {
 		return fmt.Errorf("SyncIdentity event_id 重放失败: %w", err)
 	}
-	if !proto.Equal(firstIdentity, secondIdentity) {
-		return fmt.Errorf("SyncIdentity 同 event_id 重放未返回相同 reply")
+	if err := assertIdentityReplay(firstIdentity, secondIdentity, cfg.eventID); err != nil {
+		return err
 	}
-	if firstIdentity == nil || firstIdentity.GetEventId() != cfg.eventID {
-		return fmt.Errorf("SyncIdentity 返回结构不变量失败")
+	return nil
+}
+
+// assertIdentityReplay 比较 SyncIdentity 的业务事实字段，明确排除 request_id。
+// request_id 是每次传输的追踪 ID，重放时必须重新生成而不能参与幂等事实比较。
+func assertIdentityReplay(first, second *runtimepb.IdentityReply, expectedEventID string) error {
+	if first == nil || second == nil {
+		return fmt.Errorf("SyncIdentity 返回结构不变量失败: reply 为空")
+	}
+	if first.GetEventId() != second.GetEventId() {
+		return fmt.Errorf("SyncIdentity event_id 重放不一致")
+	}
+	if first.GetIdentityId() != second.GetIdentityId() {
+		return fmt.Errorf("SyncIdentity identity_id 重放不一致")
+	}
+	if first.GetActor() != second.GetActor() {
+		return fmt.Errorf("SyncIdentity actor 重放不一致")
+	}
+	if first.GetIdentityStatus() != second.GetIdentityStatus() {
+		return fmt.Errorf("SyncIdentity identity_status 重放不一致")
+	}
+	if first.GetVerificationStatus() != second.GetVerificationStatus() {
+		return fmt.Errorf("SyncIdentity verification_status 重放不一致")
+	}
+	if first.GetStateChangedAtMs() != second.GetStateChangedAtMs() {
+		return fmt.Errorf("SyncIdentity state_changed_at_ms 重放不一致")
+	}
+	if (first.VerificationChangedAtMs == nil) != (second.VerificationChangedAtMs == nil) {
+		return fmt.Errorf("SyncIdentity verification_changed_at_ms presence 重放不一致")
+	}
+	if first.GetVerificationChangedAtMs() != second.GetVerificationChangedAtMs() {
+		return fmt.Errorf("SyncIdentity verification_changed_at_ms 重放不一致")
+	}
+	if first.GetEventApplied() != second.GetEventApplied() {
+		return fmt.Errorf("SyncIdentity event_applied 重放不一致")
+	}
+	if first.GetRequestId() == second.GetRequestId() {
+		return fmt.Errorf("SyncIdentity request_id 重放必须不同")
+	}
+	if first.GetEventId() != expectedEventID {
+		return fmt.Errorf("SyncIdentity 返回 event_id=%q，期望 %q", first.GetEventId(), expectedEventID)
 	}
 	return nil
 }

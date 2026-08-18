@@ -10,6 +10,7 @@ import (
 // Gateway 错误码是 HTTP SDK 唯一用于分支判断的稳定值，人类可读消息只作诊断。
 const (
 	GatewayInvalidInvocationRequest       = "invalid_invocation_request"
+	GatewayModerationInvalidRequest       = "moderation_invalid_request"
 	GatewayRuntimeUnauthenticated         = RuntimeUnauthenticated
 	GatewayActorAssertionInvalid          = ActorAssertionInvalid
 	GatewayActorAssertionReplayed         = ActorAssertionReplayed
@@ -21,6 +22,7 @@ const (
 	GatewayInvocationArtifactExpired      = "invocation_artifact_expired"
 	GatewayInvocationDeliveryModeMismatch = "invocation_delivery_mode_mismatch"
 	GatewayInvocationIdempotencyConflict  = "invocation_idempotency_conflict"
+	GatewayInvocationTransitionConflict   = "invocation_transition_conflict"
 	GatewayInsufficientQuota              = "insufficient_quota"
 	GatewayMemberLimitExceeded            = "member_limit_exceeded"
 	GatewayRateLimited                    = "rate_limited"
@@ -62,6 +64,23 @@ func RetryableGatewayCode(code string) bool {
 	switch code {
 	case GatewayRateLimited, GatewayUpstreamUnavailable, GatewayInternalError:
 		return true
+	case GatewayInvalidInvocationRequest,
+		GatewayModerationInvalidRequest,
+		GatewayRuntimeUnauthenticated,
+		GatewayActorAssertionInvalid,
+		GatewayActorAssertionReplayed,
+		GatewayRuntimeForbidden,
+		GatewaySKUNotAllowed,
+		GatewayComplianceRejected,
+		GatewayInvocationNotFound,
+		GatewayInvocationArtifactNotFound,
+		GatewayInvocationArtifactExpired,
+		GatewayInvocationDeliveryModeMismatch,
+		GatewayInvocationIdempotencyConflict,
+		GatewayInvocationTransitionConflict,
+		GatewayInsufficientQuota,
+		GatewayMemberLimitExceeded:
+		return false
 	default:
 		return false
 	}
@@ -135,6 +154,7 @@ func gatewayInvocationIDFromDetails(details map[string]any) string {
 func isGatewayInvocationErrorCode(code string) bool {
 	switch code {
 	case GatewayInvalidInvocationRequest,
+		GatewayModerationInvalidRequest, // moderation_invalid_request
 		GatewayRuntimeUnauthenticated,
 		GatewayActorAssertionInvalid,
 		GatewayActorAssertionReplayed,
@@ -146,6 +166,7 @@ func isGatewayInvocationErrorCode(code string) bool {
 		GatewayInvocationArtifactExpired,
 		GatewayInvocationDeliveryModeMismatch,
 		GatewayInvocationIdempotencyConflict,
+		GatewayInvocationTransitionConflict, // invocation_transition_conflict
 		GatewayInsufficientQuota,
 		GatewayMemberLimitExceeded,
 		GatewayRateLimited,
