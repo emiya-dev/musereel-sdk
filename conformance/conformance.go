@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -80,7 +81,6 @@ type config struct {
 	schemaVersion string
 	taskRef       string
 	deliveryMode  sdk.GatewayDeliveryMode
-	artifactID    string
 	input         json.RawMessage
 	parameters    json.RawMessage
 	moderation    string
@@ -106,7 +106,6 @@ func loadConfig() (config, error) {
 		"MUSEREEL_CONFORMANCE_SKU_ID",
 		"MUSEREEL_CONFORMANCE_TASK_REF",
 		"MUSEREEL_CONFORMANCE_DELIVERY_MODE",
-		"MUSEREEL_CONFORMANCE_ARTIFACT_ID",
 	} {
 		value := strings.TrimSpace(os.Getenv(name))
 		if value == "" {
@@ -172,7 +171,6 @@ func loadConfig() (config, error) {
 		schemaVersion: schemaVersion,
 		taskRef:       values["MUSEREEL_CONFORMANCE_TASK_REF"],
 		deliveryMode:  deliveryMode,
-		artifactID:    values["MUSEREEL_CONFORMANCE_ARTIFACT_ID"],
 		input:         input,
 		parameters:    parameters,
 		moderation:    moderation,
@@ -289,6 +287,172 @@ func moderationReceiptForSKU(skuID, receipt string) string {
 	return receipt
 }
 
+type conformanceArtifactRef struct {
+	artifactID   string
+	downloadPath string
+}
+
+// artifactRefsFromResult 只接受终态 snapshot.result 中由服务端签发的产物引用。
+// 结果形状按 SKU 收窄，避免把 moderation_receipt 等非产物 ID 误当成 artifact。
+func artifactRefsFromResult(skuID, invocationID string, result json.RawMessage) ([]conformanceArtifactRef, error) {
+	if strings.TrimSpace(invocationID) == "" {
+		return nil, fmt.Errorf("invocation id 为空")
+	}
+	resultObject, err := decodeArtifactResultObject(result)
+	if err != nil {
+		return nil, err
+	}
+
+	_, hasArtifact := resultObject["artifact"]
+	_, hasArtifacts := resultObject["artifacts"]
+	switch skuID {
+	case imageGenerateSKU:
+		if hasArtifact {
+			return nil, fmt.Errorf("image result 不得包含 artifact")
+		}
+		if !hasArtifacts {
+			return nil, fmt.Errorf("image result 缺少 artifacts")
+		}
+
+		var rawArtifacts []json.RawMessage
+		if err := json.Unmarshal(resultObject["artifacts"], &rawArtifacts); err != nil || rawArtifacts == nil {
+			if err == nil {
+				err = fmt.Errorf("值不是 JSON array")
+			}
+			return nil, fmt.Errorf("image result.artifacts 无效: %w", err)
+		}
+		var deliveredImageCount string
+		if rawCount, ok := resultObject["delivered_image_count"]; !ok {
+			return nil, fmt.Errorf("image result 缺少 delivered_image_count")
+		} else if err := json.Unmarshal(rawCount, &deliveredImageCount); err != nil {
+			return nil, fmt.Errorf("image result.delivered_image_count 必须是 JSON string: %w", err)
+		}
+		count, err := strconv.Atoi(deliveredImageCount)
+		if err != nil || count < 0 {
+			return nil, fmt.Errorf("image result.delivered_image_count 不是非负整数 string: %q", deliveredImageCount)
+		}
+		if len(rawArtifacts) != count {
+			return nil, fmt.Errorf("image result.artifacts 长度=%d，不等于 delivered_image_count=%d", len(rawArtifacts), count)
+		}
+
+		refs := make([]conformanceArtifactRef, 0, len(rawArtifacts))
+		for index, rawArtifact := range rawArtifacts {
+			ref, err := parseConformanceArtifactRef(rawArtifact, invocationID)
+			if err != nil {
+				return nil, fmt.Errorf("image result.artifacts[%d] 无效: %w", index, err)
+			}
+			refs = append(refs, ref)
+		}
+		return refs, nil
+
+	case videoGenerateSKU, musicGenerateSKU, speechGenerateSKU:
+		if hasArtifacts {
+			return nil, fmt.Errorf("%s result 不得包含 artifacts", skuID)
+		}
+		if !hasArtifact {
+			return nil, fmt.Errorf("%s result 缺少 artifact", skuID)
+		}
+		ref, err := parseConformanceArtifactRef(resultObject["artifact"], invocationID)
+		if err != nil {
+			return nil, fmt.Errorf("%s result.artifact 无效: %w", skuID, err)
+		}
+		return []conformanceArtifactRef{ref}, nil
+
+	case textGenerateSKU, lyricsGenerateSKU, moderationGenerateSKU:
+		if hasArtifact || hasArtifacts {
+			return nil, fmt.Errorf("%s result 不得包含 artifact 或 artifacts", skuID)
+		}
+		return nil, nil
+
+	default:
+		return nil, fmt.Errorf("未知 SKU %q，无法解析 artifact result", skuID)
+	}
+}
+
+func decodeArtifactResultObject(result json.RawMessage) (map[string]json.RawMessage, error) {
+	if len(bytes.TrimSpace(result)) == 0 {
+		return nil, fmt.Errorf("终态 snapshot.result 为空")
+	}
+	var resultObject map[string]json.RawMessage
+	if err := json.Unmarshal(result, &resultObject); err != nil {
+		return nil, fmt.Errorf("终态 snapshot.result 必须是 JSON object: %w", err)
+	}
+	if resultObject == nil {
+		return nil, fmt.Errorf("终态 snapshot.result 必须是 JSON object，不能是 null")
+	}
+	return resultObject, nil
+}
+
+func parseConformanceArtifactRef(rawArtifact json.RawMessage, invocationID string) (conformanceArtifactRef, error) {
+	var artifactObject map[string]json.RawMessage
+	if err := json.Unmarshal(rawArtifact, &artifactObject); err != nil || artifactObject == nil {
+		if err == nil {
+			err = fmt.Errorf("值不是 JSON object")
+		}
+		return conformanceArtifactRef{}, err
+	}
+
+	rawArtifactID, ok := artifactObject["artifact_id"]
+	if !ok {
+		return conformanceArtifactRef{}, fmt.Errorf("缺少 artifact_id")
+	}
+	var artifactID string
+	if err := json.Unmarshal(rawArtifactID, &artifactID); err != nil || strings.TrimSpace(artifactID) == "" {
+		if err == nil {
+			err = fmt.Errorf("值必须是非空 JSON string")
+		}
+		return conformanceArtifactRef{}, fmt.Errorf("artifact_id 无效: %w", err)
+	}
+
+	rawDownloadPath, ok := artifactObject["download_path"]
+	if !ok {
+		return conformanceArtifactRef{}, fmt.Errorf("缺少 download_path")
+	}
+	var downloadPath string
+	if err := json.Unmarshal(rawDownloadPath, &downloadPath); err != nil {
+		return conformanceArtifactRef{}, fmt.Errorf("download_path 必须是 JSON string: %w", err)
+	}
+	expectedDownloadPath := "/runtime/v1/invocations/" + invocationID + "/artifacts/" + artifactID
+	if downloadPath != expectedDownloadPath {
+		return conformanceArtifactRef{}, fmt.Errorf("download_path=%q，不等于服务端 artifact 路径 %q", downloadPath, expectedDownloadPath)
+	}
+
+	return conformanceArtifactRef{artifactID: artifactID, downloadPath: downloadPath}, nil
+}
+
+func skuProducesArtifacts(skuID string) bool {
+	switch skuID {
+	case videoGenerateSKU, imageGenerateSKU, musicGenerateSKU, speechGenerateSKU:
+		return true
+	default:
+		return false
+	}
+}
+
+// artifactLegMarker 产出这条腿的机器可读标记，并在两处 SKU 分类不一致时失败。
+//
+// 标记是**外部矩阵判「artifact 传输腿到底跑没跑过」的唯一锚**——非产物 SKU 打 skipped、
+// 产物 SKU 打 downloaded 加实际下载数。正因为它是唯一锚，两种不一致必须当场失败，
+// 否则标记会替一条根本没跑的腿作证：
+//
+//	① skuProducesArtifacts 说不产、result 里却解出了引用。SKU 分类在本文件里写了两处
+//	   （artifactRefsFromResult 的 switch 决定解析形状，这个函数决定腿跑不跑），
+//	   新增产物 SKU 只改一边就会漂移，症状是打 skipped 而引用非空、下载一个都不发。
+//	② 说产出、却一个引用都没有。`ARTIFACT_LEG=downloaded ... count=0` 是假标记：
+//	   矩阵闭包只看 downloaded 出现过没有，会把它读成这条腿已覆盖。
+func artifactLegMarker(skuID string, refCount int) (string, error) {
+	produces := skuProducesArtifacts(skuID)
+	if produces != (refCount > 0) {
+		return "", fmt.Errorf(
+			"artifact 分类自相矛盾: sku=%s skuProducesArtifacts=%t，但从 result 解析出 %d 个产物引用",
+			skuID, produces, refCount)
+	}
+	if !produces {
+		return fmt.Sprintf("ARTIFACT_LEG=skipped sku=%s", skuID), nil
+	}
+	return fmt.Sprintf("ARTIFACT_LEG=downloaded sku=%s count=%d", skuID, refCount), nil
+}
+
 // runGateway 覆盖 token exchange、create、GET、幂等、cancel、ETag
 // 和 artifact Content-Digest 路径；所有 HTTP 交互都经过 GatewayClient。
 func runGateway(ctx context.Context, cfg config, client *sdk.GatewayClient) error {
@@ -334,10 +498,22 @@ func runGateway(ctx context.Context, cfg config, client *sdk.GatewayClient) erro
 		return fmt.Errorf("gateway 幂等重放未暴露 303/AlreadyExists: status=%d already_exists=%t", replay.StatusCode, replay.AlreadyExists)
 	}
 
-	artifact := new(bytes.Buffer)
-	if err := client.DownloadArtifact(ctx, invocationID, cfg.artifactID, artifact); err != nil {
-		return fmt.Errorf("gateway Content-Digest 校验路径失败: %w", err)
+	artifactRefs, err := artifactRefsFromResult(cfg.skuID, invocationID, snapshot.Result)
+	if err != nil {
+		return fmt.Errorf("从终态 snapshot.result 解析 artifact 失败: %w", err)
 	}
+	marker, err := artifactLegMarker(cfg.skuID, len(artifactRefs))
+	if err != nil {
+		return err
+	}
+	for _, artifactRef := range artifactRefs {
+		artifact := new(bytes.Buffer)
+		if err := client.DownloadArtifact(ctx, invocationID, artifactRef.artifactID, artifact); err != nil {
+			return fmt.Errorf("gateway Content-Digest 校验路径失败 artifact_id=%s: %w", artifactRef.artifactID, err)
+		}
+	}
+	// 标记只在这条腿真跑完之后才打：下载中途失败会带着错误返回，不留下「跑过了」的痕迹。
+	fmt.Println(marker)
 
 	cancelKey := conformanceKey("cancel")
 	cancelID, stream, err := createForCancel(ctx, client, request, cancelKey, cfg.deliveryMode)
