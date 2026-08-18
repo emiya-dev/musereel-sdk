@@ -28,6 +28,7 @@ type runtimeBufconnServer struct {
 	calls             map[string]int
 	failFirst         map[string]bool
 	resolveAuth       []string
+	resolveDomains    []string
 	confirmRequests   []*runtimepb.ConfirmRegistrationRequest
 	createRequests    []*runtimepb.CreateOrderRequest
 	paymentRequests   []*runtimepb.VerifyAndConfirmPaymentRequest
@@ -101,11 +102,9 @@ func (server *runtimeBufconnServer) ExchangeRuntimeToken(context.Context, *runti
 }
 
 func (server *runtimeBufconnServer) ResolveRegistration(ctx context.Context, request *runtimepb.ResolveRegistrationRequest) (*runtimepb.RegistrationIntent, error) {
-	if authorization := server.authorization(ctx); authorization != "" {
-		return nil, status.Error(codes.PermissionDenied, "public resolve unexpectedly received Bearer")
-	}
 	server.mu.Lock()
 	server.resolveAuth = append(server.resolveAuth, server.authorization(ctx))
+	server.resolveDomains = append(server.resolveDomains, request.GetDomain())
 	server.mu.Unlock()
 	return &runtimepb.RegistrationIntent{
 		RequestId:                     "intent-request",
@@ -278,7 +277,8 @@ func TestRuntimeClientBufconnContract(t *testing.T) {
 	tokens, exchanges := runtimeTestTokens(now)
 	client := NewRuntimeClient(connection, tokens, WithRuntimeAssertion(signer, "instance-01", "tenant-01", "session-01"))
 
-	if _, err := client.ResolveRegistration(context.Background(), &runtimepb.ResolveRegistrationRequest{SiteContextToken: "public-site", InviteCode: "invite"}); err != nil {
+	const rawDomain = "Tenant.Example.TEST"
+	if _, err := client.ResolveRegistration(context.Background(), &runtimepb.ResolveRegistrationRequest{Domain: rawDomain, InviteCode: "invite"}); err != nil {
 		t.Fatalf("ResolveRegistration: %v", err)
 	}
 	intent := &runtimepb.RegistrationIntent{RegistrationIntentToken: "intent-token", RegistrationIntentFingerprint: "intent-fingerprint"}
@@ -325,8 +325,11 @@ func TestRuntimeClientBufconnContract(t *testing.T) {
 
 	server.mu.Lock()
 	defer server.mu.Unlock()
-	if len(server.resolveAuth) != 1 || server.resolveAuth[0] != "" {
-		t.Fatalf("ResolveRegistration authorization = %#v, want no Bearer", server.resolveAuth)
+	if len(server.resolveAuth) != 1 || !strings.HasPrefix(server.resolveAuth[0], "Bearer ") {
+		t.Fatalf("ResolveRegistration authorization = %#v, want a Bearer", server.resolveAuth)
+	}
+	if len(server.resolveDomains) != 1 || server.resolveDomains[0] != rawDomain {
+		t.Fatalf("ResolveRegistration domain = %#v, want exact %q", server.resolveDomains, rawDomain)
 	}
 	if len(server.confirmRequests) != 1 {
 		t.Fatalf("ConfirmRegistration calls = %d, want 1", len(server.confirmRequests))
@@ -398,7 +401,8 @@ func TestRuntimeErrorInfoRoundTripsThroughBufconn(t *testing.T) {
 	server := &runtimeErrorBufconnServer{
 		err: runtimeErrorStatus(codes.Aborted, "调用幂等键与既有请求冲突", stableCode, testRuntimeErrorDomain, map[string]string{}),
 	}
-	client := NewRuntimeClient(newRuntimeBufconn(t, server), nil)
+	tokens, _ := runtimeTestTokens(time.Unix(1_800_000_000, 0))
+	client := NewRuntimeClient(newRuntimeBufconn(t, server), tokens)
 
 	_, err := client.ResolveRegistration(context.Background(), &runtimepb.ResolveRegistrationRequest{})
 	if err == nil {
@@ -426,7 +430,8 @@ func TestRuntimeAbortedDetailsRemainDistinct(t *testing.T) {
 			server := &runtimeErrorBufconnServer{
 				err: runtimeErrorStatus(codes.Aborted, "业务请求被拒绝", stableCode, testRuntimeErrorDomain, map[string]string{}),
 			}
-			client := NewRuntimeClient(newRuntimeBufconn(t, server), nil)
+			tokens, _ := runtimeTestTokens(time.Unix(1_800_000_000, 0))
+			client := NewRuntimeClient(newRuntimeBufconn(t, server), tokens)
 
 			_, err := client.ResolveRegistration(context.Background(), &runtimepb.ResolveRegistrationRequest{})
 			if err == nil {
@@ -462,7 +467,8 @@ func TestRuntimeRetryableMetadataHasThreeStates(t *testing.T) {
 			server := &runtimeErrorBufconnServer{
 				err: runtimeErrorStatus(testCase.grpcCode, "业务错误", testCase.stableCode, testRuntimeErrorDomain, testCase.metadata),
 			}
-			client := NewRuntimeClient(newRuntimeBufconn(t, server), nil)
+			tokens, _ := runtimeTestTokens(time.Unix(1_800_000_000, 0))
+			client := NewRuntimeClient(newRuntimeBufconn(t, server), tokens)
 
 			_, err := client.ResolveRegistration(context.Background(), &runtimepb.ResolveRegistrationRequest{})
 			if err == nil {
@@ -751,7 +757,8 @@ func TestRuntimeStableErrorMappingDoesNotAddRetry(t *testing.T) {
 				}
 			}
 			connection := &runtimeErrorConn{err: testCase.err}
-			client := NewRuntimeClient(connection, nil)
+			tokens, _ := runtimeTestTokens(time.Unix(1_800_000_000, 0))
+			client := NewRuntimeClient(connection, tokens)
 			_, err := client.ResolveRegistration(context.Background(), &runtimepb.ResolveRegistrationRequest{})
 			if err == nil {
 				t.Fatal("ResolveRegistration unexpectedly succeeded")
@@ -768,108 +775,4 @@ func TestRuntimeStableErrorMappingDoesNotAddRetry(t *testing.T) {
 			}
 		})
 	}
-}
-
-// runtimeResolvePathServer 只服务 SDK-007：它把 ResolveRegistration 收到的
-// authorization 原样记下来并**照常成功**，两条路都不拒。
-//
-// 刻意不复用 runtimeBufconnServer——那一个对任何 Bearer 直接 PermissionDenied，
-// 它建模的是公有路径的服务端约束，是既有的负对照。把它放宽会让
-// TestRuntimeClientBufconnContract 那条「公有路径不许带 Bearer」的断言失去意义。
-type runtimeResolvePathServer struct {
-	runtimepb.UnimplementedRuntimeServiceServer
-
-	mu            sync.Mutex
-	authorization []string
-	siteTokens    []string
-}
-
-func (server *runtimeResolvePathServer) ResolveRegistration(
-	ctx context.Context,
-	request *runtimepb.ResolveRegistrationRequest,
-) (*runtimepb.RegistrationIntent, error) {
-	authorization := ""
-	if values, ok := metadata.FromIncomingContext(ctx); ok {
-		if header := values.Get("authorization"); len(header) > 0 {
-			authorization = header[0]
-		}
-	}
-	server.mu.Lock()
-	server.authorization = append(server.authorization, authorization)
-	server.siteTokens = append(server.siteTokens, request.GetSiteContextToken())
-	server.mu.Unlock()
-	return &runtimepb.RegistrationIntent{
-		RequestId:                     "resolve-path-request",
-		RegistrationIntentToken:       "intent-token",
-		RegistrationIntentFingerprint: "intent-fingerprint",
-		ExpiresAtMs:                   1_800_000_600_000,
-	}, nil
-}
-
-// TestResolveRegistrationChoosesPathByRequest 钉住 SDK-007 的判据。
-//
-// 三种组合缺一不可：
-//   - 只断 dedicated 会带 Bearer ⇒ 漏掉「改成永远附加」，那会打断公有路径；
-//   - 只断公有不带 Bearer ⇒ 漏掉当初那个缺陷本身（永远不附加）；
-//   - 不断「无 tokens 且无 site token」⇒ 漏掉 nil TokenSource 上的
-//     "authenticated grpc client is not configured" 本地报错，
-//     那会把一个服务端才该判的错提前变成 SDK 错。
-func TestResolveRegistrationChoosesPathByRequest(t *testing.T) {
-	now := time.Unix(1_800_000_000, 0)
-
-	t.Run("dedicated attaches bearer", func(t *testing.T) {
-		server := &runtimeResolvePathServer{}
-		tokens, _ := runtimeTestTokens(now)
-		client := NewRuntimeClient(newRuntimeBufconn(t, server), tokens)
-
-		if _, err := client.ResolveRegistration(
-			context.Background(),
-			&runtimepb.ResolveRegistrationRequest{InviteCode: "invite"},
-		); err != nil {
-			t.Fatalf("ResolveRegistration: %v", err)
-		}
-		server.mu.Lock()
-		defer server.mu.Unlock()
-		if len(server.authorization) != 1 || !strings.HasPrefix(server.authorization[0], "Bearer ") {
-			t.Fatalf("dedicated authorization = %#v, want a Bearer", server.authorization)
-		}
-		if server.siteTokens[0] != "" {
-			t.Fatalf("dedicated site token = %q, want empty", server.siteTokens[0])
-		}
-	})
-
-	t.Run("public keeps bearer off even when tokens exist", func(t *testing.T) {
-		server := &runtimeResolvePathServer{}
-		tokens, _ := runtimeTestTokens(now)
-		client := NewRuntimeClient(newRuntimeBufconn(t, server), tokens)
-
-		if _, err := client.ResolveRegistration(
-			context.Background(),
-			&runtimepb.ResolveRegistrationRequest{SiteContextToken: "public-site"},
-		); err != nil {
-			t.Fatalf("ResolveRegistration: %v", err)
-		}
-		server.mu.Lock()
-		defer server.mu.Unlock()
-		if len(server.authorization) != 1 || server.authorization[0] != "" {
-			t.Fatalf("public authorization = %#v, want none（site token 与 Bearer 在服务端互斥）", server.authorization)
-		}
-	})
-
-	t.Run("no tokens stays anonymous", func(t *testing.T) {
-		server := &runtimeResolvePathServer{}
-		client := NewRuntimeClient(newRuntimeBufconn(t, server), nil)
-
-		if _, err := client.ResolveRegistration(
-			context.Background(),
-			&runtimepb.ResolveRegistrationRequest{},
-		); err != nil {
-			t.Fatalf("ResolveRegistration: %v", err)
-		}
-		server.mu.Lock()
-		defer server.mu.Unlock()
-		if len(server.authorization) != 1 || server.authorization[0] != "" {
-			t.Fatalf("nil TokenSource authorization = %#v, want none", server.authorization)
-		}
-	})
 }

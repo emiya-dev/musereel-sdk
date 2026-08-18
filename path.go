@@ -6,8 +6,7 @@ import (
 )
 
 // GatewayRoute identifies one of the four invocation routes frozen for the
-// assertion fingerprint surface. The fifth route in the HTTP anchor is the
-// site-context route and is intentionally not part of SDK-002 assertions.
+// assertion fingerprint surface.
 type GatewayRoute string
 
 const (

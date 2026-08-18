@@ -43,7 +43,7 @@ const (
 type RuntimeServiceClient interface {
 	// ExchangeRuntimeToken 用 mTLS 客户端证书换取短期不透明访问令牌。
 	ExchangeRuntimeToken(ctx context.Context, in *ExchangeRuntimeTokenRequest, opts ...grpc.CallOption) (*ExchangeRuntimeTokenReply, error)
-	// ResolveRegistration 解析公有 site token 或 dedicated scope，产出十分钟 intent。
+	// ResolveRegistration 解析已认证 mTLS + Bearer 实例 scope 与 domain（S74），产出十分钟 intent。
 	ResolveRegistration(ctx context.Context, in *ResolveRegistrationRequest, opts ...grpc.CallOption) (*RegistrationIntent, error)
 	// ConfirmRegistration 单事务创建身份、成员关系、归属、邀请码占用与可选赠送。
 	ConfirmRegistration(ctx context.Context, in *ConfirmRegistrationRequest, opts ...grpc.CallOption) (*RegistrationReply, error)
@@ -227,7 +227,7 @@ func (c *runtimeServiceClient) ListSiteBranding(ctx context.Context, in *ListSit
 type RuntimeServiceServer interface {
 	// ExchangeRuntimeToken 用 mTLS 客户端证书换取短期不透明访问令牌。
 	ExchangeRuntimeToken(context.Context, *ExchangeRuntimeTokenRequest) (*ExchangeRuntimeTokenReply, error)
-	// ResolveRegistration 解析公有 site token 或 dedicated scope，产出十分钟 intent。
+	// ResolveRegistration 解析已认证 mTLS + Bearer 实例 scope 与 domain（S74），产出十分钟 intent。
 	ResolveRegistration(context.Context, *ResolveRegistrationRequest) (*RegistrationIntent, error)
 	// ConfirmRegistration 单事务创建身份、成员关系、归属、邀请码占用与可选赠送。
 	ConfirmRegistration(context.Context, *ConfirmRegistrationRequest) (*RegistrationReply, error)

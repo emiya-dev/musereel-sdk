@@ -143,10 +143,6 @@ func run(ctx context.Context, cfg config) error {
 	tokens := sdk.NewGRPCTokenSource(connection)
 	runtimeClient := sdk.NewRuntimeClient(connection, tokens,
 		sdk.WithRuntimeAssertion(signer, cfg.instanceID, cfg.tenantID, cfg.sessionID))
-	siteClient, err := sdk.NewGatewaySiteContextClient(cfg.gatewayURL, tlsConfig)
-	if err != nil {
-		return fmt.Errorf("构造 site-context client 失败: %w", err)
-	}
 	gatewayClient, err := sdk.NewGatewayClient(cfg.gatewayURL, tlsConfig, tokens, signer, sdk.GatewayIdentity{
 		InstanceID: cfg.instanceID,
 		TenantID:   cfg.tenantID,
@@ -157,23 +153,15 @@ func run(ctx context.Context, cfg config) error {
 		return fmt.Errorf("构造 Gateway client 失败: %w", err)
 	}
 
-	if err := runGateway(ctx, cfg, siteClient, gatewayClient); err != nil {
+	if err := runGateway(ctx, cfg, gatewayClient); err != nil {
 		return err
 	}
 	return runRuntime(ctx, cfg, runtimeClient, tokens, publicKey)
 }
 
-// runGateway 覆盖 site-context、token exchange、create、GET、幂等、cancel、ETag
+// runGateway 覆盖 token exchange、create、GET、幂等、cancel、ETag
 // 和 artifact Content-Digest 路径；所有 HTTP 交互都经过 GatewayClient。
-func runGateway(ctx context.Context, cfg config, siteClient *sdk.GatewaySiteContextClient, client *sdk.GatewayClient) error {
-	siteContext, err := siteClient.Issue(ctx)
-	if err != nil {
-		return fmt.Errorf("gateway site-context 签发失败: %w", err)
-	}
-	if siteContext.RequestID == "" || siteContext.SiteContextToken.Reveal() == "" || siteContext.ExpiresAtMS <= 0 {
-		return fmt.Errorf("gateway site-context 结构不变量失败")
-	}
-
+func runGateway(ctx context.Context, cfg config, client *sdk.GatewayClient) error {
 	request := sdk.GatewayCreateRequest{
 		SKU:     cfg.skuID,
 		TaskRef: cfg.taskRef,

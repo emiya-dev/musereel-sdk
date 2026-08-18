@@ -8,7 +8,7 @@ option go_package = "./runtime";
 service RuntimeService {
   // ExchangeRuntimeToken 用 mTLS 客户端证书换取短期不透明访问令牌。
   rpc ExchangeRuntimeToken(ExchangeRuntimeTokenRequest) returns (ExchangeRuntimeTokenReply);
-  // ResolveRegistration 解析公有 site token 或 dedicated scope，产出十分钟 intent。
+  // ResolveRegistration 解析已认证 mTLS + Bearer 实例 scope 与 domain（S74），产出十分钟 intent。
   rpc ResolveRegistration(ResolveRegistrationRequest) returns (RegistrationIntent);
   // ConfirmRegistration 单事务创建身份、成员关系、归属、邀请码占用与可选赠送。
   rpc ConfirmRegistration(ConfirmRegistrationRequest) returns (RegistrationReply);
@@ -47,8 +47,10 @@ message ExchangeRuntimeTokenReply {
 }
 
 message ResolveRegistrationRequest {
-  string site_context_token = 1;
+  reserved 1;
+  reserved "site_context_token";
   string invite_code = 2;
+  string domain = 3;
 }
 
 message RegistrationIntent {
