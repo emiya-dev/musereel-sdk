@@ -4,6 +4,7 @@ package conformance
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -21,6 +22,80 @@ func TestSluiceComposeConformance(t *testing.T) {
 	defer cancel()
 	if err := run(ctx, cfg); err != nil {
 		t.Fatalf("conformance 失败：%v", err)
+	}
+}
+
+func TestConformanceSchemaVersionDefaults(t *testing.T) {
+	oneVersionSKUs := []string{
+		textGenerateSKU,
+		moderationGenerateSKU,
+		imageGenerateSKU,
+		lyricsGenerateSKU,
+		musicGenerateSKU,
+		speechGenerateSKU,
+	}
+	for _, skuID := range oneVersionSKUs {
+		skuID := skuID
+		t.Run(skuID, func(t *testing.T) {
+			got, err := defaultSchemaVersionForSKU(skuID)
+			if err != nil {
+				t.Fatalf("schema_version lookup failed for sku=%q: %v", skuID, err)
+			}
+			if got != conformanceSchemaVersionOne {
+				t.Fatalf("sku=%q schema_version=%q, want %q", skuID, got, conformanceSchemaVersionOne)
+			}
+		})
+	}
+
+	t.Run(videoGenerateSKU, func(t *testing.T) {
+		got, err := defaultSchemaVersionForSKU(videoGenerateSKU)
+		if err != nil {
+			t.Fatalf("schema_version lookup failed for sku=%q: %v", videoGenerateSKU, err)
+		}
+		if got != conformanceVideoSchemaVersion {
+			t.Fatalf("sku=%q schema_version=%q, want %q", videoGenerateSKU, got, conformanceVideoSchemaVersion)
+		}
+	})
+}
+
+func TestConformanceSchemaVersionOverrideAndUnknownSKU(t *testing.T) {
+	got, err := resolveConformanceSchemaVersion(videoGenerateSKU, " explicit ")
+	if err != nil {
+		t.Fatalf("schema_version override failed: %v", err)
+	}
+	if got != "explicit" {
+		t.Fatalf("schema_version override=%q, want %q", got, "explicit")
+	}
+
+	if _, err := resolveConformanceSchemaVersion("unknown.generate.v1", "explicit"); err == nil {
+		t.Fatal("unknown SKU with an override unexpectedly succeeded")
+	}
+}
+
+func TestModerationTargetSchemaVersionUsesTargetSKU(t *testing.T) {
+	input, _, err := buildConformanceSpec(moderationGenerateSKU, conformanceVideoSchemaVersion)
+	if err != nil {
+		t.Fatalf("build moderation spec failed: %v", err)
+	}
+
+	var moderationSpec struct {
+		TargetSKUID string `json:"target_sku_id"`
+		TargetSpec  struct {
+			SchemaVersion string `json:"schema_version"`
+		} `json:"target_spec"`
+	}
+	if err := json.Unmarshal(input, &moderationSpec); err != nil {
+		t.Fatalf("decode moderation spec failed: %v", err)
+	}
+	if moderationSpec.TargetSKUID != textGenerateSKU {
+		t.Fatalf("moderation target_sku_id=%q, want %q", moderationSpec.TargetSKUID, textGenerateSKU)
+	}
+	want, err := defaultSchemaVersionForSKU(textGenerateSKU)
+	if err != nil {
+		t.Fatalf("target schema_version lookup failed: %v", err)
+	}
+	if moderationSpec.TargetSpec.SchemaVersion != want {
+		t.Fatalf("moderation target schema_version=%q, want target SKU %q default %q", moderationSpec.TargetSpec.SchemaVersion, textGenerateSKU, want)
 	}
 }
 
