@@ -431,3 +431,35 @@ func TestGatewayCreateRejectsNumericParametersAndShortKeys(t *testing.T) {
 		t.Fatal("short idempotency key was accepted")
 	}
 }
+
+// TestCreateRequestAlwaysSerializesModerationReceiptKey 钉的是「空收据必须仍然出现在线上」。
+//
+// gateway 的 parseCreateBody 显式要求 moderation_receipt 这个**键存在**，缺键当场 400
+// （sluice backend/service/gateway/internal/httpapi/fingerprint.go:109-111）。而 moderation
+// SKU 自己必须传空串——中枢 e2e 传的也是空串。两条合起来的结果是：这个字段既不能省、
+// 又必须能为空，因此 json tag 绝不能加 omitempty。
+//
+// 加了 omitempty 不会有任何编译错误或类型错误，只会让 moderation 的请求悄悄少一个键，
+// 而症状是七个 SKU 一起 400 —— 报错方向指向"请求结构错"，与真因"某人给一个字段加了
+// 一个看起来无害的 tag"相隔很远。所以这条必须是机器判据，不能只写注释。
+func TestCreateRequestAlwaysSerializesModerationReceiptKey(t *testing.T) {
+	encoded, err := json.Marshal(GatewayCreateRequest{
+		SKU:               "moderation.generate.v1",
+		TaskRef:           "guard-task",
+		ModerationReceipt: "",
+	})
+	if err != nil {
+		t.Fatalf("marshal 失败: %v", err)
+	}
+
+	var probe map[string]json.RawMessage
+	if err := json.Unmarshal(encoded, &probe); err != nil {
+		t.Fatalf("unmarshal 失败: %v", err)
+	}
+	if _, ok := probe["moderation_receipt"]; !ok {
+		t.Fatalf("moderation_receipt 键必须出现在线级请求里（禁止 omitempty），实际 body=%s", encoded)
+	}
+	if got := string(probe["moderation_receipt"]); got != `""` {
+		t.Fatalf("空收据必须序列化成空串，实际 %s", got)
+	}
+}

@@ -273,7 +273,15 @@ func run(ctx context.Context, cfg config) error {
 // （compliance 侧「moderation SKU 不得携带 moderation_receipt」）。而该拒绝走的内部码
 // compliance_invalid_request 不在 gateway 的冻结公共码集合里，会被折叠成
 // internal_error / HTTP 500 —— 于是 suite 只能看到「内部错误」，看不出是自己多发了一个字段。
-// 这里按 SKU 择一，不要改成「让中枢容忍」：中枢那条拒绝是对的。
+// 这里按 SKU 择一，不要改成「让中枢容忍」：中枢那条拒绝是对的
+// —— 中枢自己的 e2e 给 moderation 传的也是空串（sluice
+// backend/pkg/app/e2e/invocation_runtime_integration_test.go:817,843）。
+//
+// ⚠ 返回空串是「键在、值为空」，**不是**「不发这个键」。gateway 的 parseCreateBody
+// 显式要求 moderation_receipt 这个键必须存在，缺键直接 400
+// （sluice backend/service/gateway/internal/httpapi/fingerprint.go:109-111）。
+// ⇒ GatewayCreateRequest.ModerationReceipt 的 json tag **不能**加 omitempty，
+// 加了会让这里的空串从线上消失，七个 SKU 一起变 400。
 func moderationReceiptForSKU(skuID, receipt string) string {
 	if skuID == moderationGenerateSKU {
 		return ""
