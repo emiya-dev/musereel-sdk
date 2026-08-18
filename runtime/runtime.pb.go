@@ -134,11 +134,11 @@ func (x *ExchangeRuntimeTokenReply) GetExpiresAtMs() int64 {
 }
 
 type ResolveRegistrationRequest struct {
-	state            protoimpl.MessageState `protogen:"open.v1"`
-	SiteContextToken string                 `protobuf:"bytes,1,opt,name=site_context_token,json=siteContextToken,proto3" json:"site_context_token,omitempty"`
-	InviteCode       string                 `protobuf:"bytes,2,opt,name=invite_code,json=inviteCode,proto3" json:"invite_code,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	InviteCode    string                 `protobuf:"bytes,2,opt,name=invite_code,json=inviteCode,proto3" json:"invite_code,omitempty"`
+	Domain        string                 `protobuf:"bytes,3,opt,name=domain,proto3" json:"domain,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ResolveRegistrationRequest) Reset() {
@@ -171,16 +171,16 @@ func (*ResolveRegistrationRequest) Descriptor() ([]byte, []int) {
 	return file_runtime_proto_rawDescGZIP(), []int{2}
 }
 
-func (x *ResolveRegistrationRequest) GetSiteContextToken() string {
+func (x *ResolveRegistrationRequest) GetInviteCode() string {
 	if x != nil {
-		return x.SiteContextToken
+		return x.InviteCode
 	}
 	return ""
 }
 
-func (x *ResolveRegistrationRequest) GetInviteCode() string {
+func (x *ResolveRegistrationRequest) GetDomain() string {
 	if x != nil {
-		return x.InviteCode
+		return x.Domain
 	}
 	return ""
 }
@@ -3145,11 +3145,11 @@ const file_runtime_proto_rawDesc = "" +
 	"\n" +
 	"token_type\x18\x03 \x01(\tR\ttokenType\x12,\n" +
 	"\x12expires_in_seconds\x18\x04 \x01(\x03R\x10expiresInSeconds\x12\"\n" +
-	"\rexpires_at_ms\x18\x05 \x01(\x03R\vexpiresAtMs\"k\n" +
-	"\x1aResolveRegistrationRequest\x12,\n" +
-	"\x12site_context_token\x18\x01 \x01(\tR\x10siteContextToken\x12\x1f\n" +
+	"\rexpires_at_ms\x18\x05 \x01(\x03R\vexpiresAtMs\"o\n" +
+	"\x1aResolveRegistrationRequest\x12\x1f\n" +
 	"\vinvite_code\x18\x02 \x01(\tR\n" +
-	"inviteCode\"\xc7\x02\n" +
+	"inviteCode\x12\x16\n" +
+	"\x06domain\x18\x03 \x01(\tR\x06domainJ\x04\b\x01\x10\x02R\x12site_context_token\"\xc7\x02\n" +
 	"\x12RegistrationIntent\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x01 \x01(\tR\trequestId\x12:\n" +

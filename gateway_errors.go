@@ -26,10 +26,6 @@ const (
 	GatewayRateLimited                    = "rate_limited"
 	GatewayUpstreamUnavailable            = "upstream_unavailable"
 	GatewayInternalError                  = "internal_error"
-
-	GatewayInvalidRegistration     = "invalid_registration"
-	GatewaySiteContextInvalid      = "site_context_invalid"
-	GatewayRegistrationUnavailable = "registration_unavailable"
 )
 
 // GatewayError 是 Gateway HTTP 返回的稳定错误形状。Retryable 保留 wire 原值供诊断；
@@ -77,12 +73,8 @@ func (err GatewayError) RetryableByCode() bool {
 	return RetryableGatewayCode(err.Code)
 }
 
-// IsRetryable 是 RetryableByCode 的显式方法形式。registration 有独立冻结契约：
-// registration_unavailable 携带 retryable=true，但不属于 invocation 三码表。
+// IsRetryable 是 RetryableByCode 的显式方法形式。
 func (err GatewayError) IsRetryable() bool {
-	if err.Code == GatewayRegistrationUnavailable {
-		return err.Retryable
-	}
 	return RetryableGatewayCode(err.Code)
 }
 
@@ -159,16 +151,6 @@ func isGatewayInvocationErrorCode(code string) bool {
 		GatewayRateLimited,
 		GatewayUpstreamUnavailable,
 		GatewayInternalError:
-		return true
-	default:
-		return false
-	}
-}
-
-func isGatewaySiteContextErrorCode(code string) bool {
-	switch code {
-	case GatewayInvalidRegistration, GatewaySiteContextInvalid,
-		GatewayRegistrationUnavailable, GatewayInternalError:
 		return true
 	default:
 		return false

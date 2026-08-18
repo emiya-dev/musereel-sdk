@@ -420,46 +420,6 @@ func TestGatewayRetryableTableAndWireMismatch(t *testing.T) {
 	}
 }
 
-func TestGatewaySiteContextUsesEmptyUnauthenticatedRequest(t *testing.T) {
-	var bodyLength atomic.Int32
-	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
-		body, err := io.ReadAll(request.Body)
-		if err != nil {
-			t.Fatalf("read site-context body: %v", err)
-		}
-		bodyLength.Store(int32(len(body)))
-		if len(body) != 0 || request.Header.Get("Authorization") != "" || request.Header.Get("X-Sluice-Actor") != "" || request.Header.Get("X-Sluice-Actor-Assertion") != "" {
-			writeGatewayJSON(w, http.StatusBadRequest, []byte(`{"request_id":"req","error":{"code":"invalid_registration","message":"bad","retryable":false,"retry_after_ms":null,"details":{}}}`))
-			return
-		}
-		writeGatewayJSON(w, http.StatusOK, []byte(`{"request_id":"req-site","site_context_token":"site-secret-token","expires_at_ms":1800000060000}`))
-	}))
-	defer server.Close()
-	client, err := NewGatewaySiteContextClient(server.URL, server.Client().Transport.(*http.Transport).TLSClientConfig)
-	if err != nil {
-		t.Fatalf("NewGatewaySiteContextClient: %v", err)
-	}
-	response, err := client.Issue(context.Background())
-	if err != nil {
-		t.Fatalf("Issue: %v", err)
-	}
-	if bodyLength.Load() != 0 || response.SiteContextToken.Reveal() != "site-secret-token" {
-		t.Fatalf("site-context response = %#v, body length = %d", response, bodyLength.Load())
-	}
-	if formatted := fmt.Sprintf("%v", response.SiteContextToken); strings.Contains(formatted, "site-secret-token") {
-		t.Fatalf("site-context token leaked in formatting: %q", formatted)
-	}
-	// 负对照：服务端对非空 body 返回冻结的 invalid_registration。
-	nonEmpty, err := server.Client().Post(server.URL+gatewaySiteContextPath, "application/json", strings.NewReader(`{}`))
-	if err != nil {
-		t.Fatalf("non-empty site-context request: %v", err)
-	}
-	defer nonEmpty.Body.Close()
-	if nonEmpty.StatusCode != http.StatusBadRequest {
-		t.Fatalf("non-empty body status = %d", nonEmpty.StatusCode)
-	}
-}
-
 func TestGatewayCreateRejectsNumericParametersAndShortKeys(t *testing.T) {
 	request := validGatewayCreateRequest()
 	request.Spec.Parameters = map[string]any{"duration": 5}

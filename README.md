@@ -27,13 +27,13 @@ metadata as one reviewed change. The local gate recomputes the mirror's
 SHA-256 and fails unless it equals the pinned value. It does not fetch the
 internal source repository.
 
-`ResolveRegistrationRequest.invite_code` remains the frozen wire field. It is a
-channel identifier only; for the public resolution path, merchant ownership is
-derived from `site_context_token`, not from `invite_code`. This semantic note
-does not rename the field or change the contract pin.
+`ResolveRegistrationRequest.domain` is supplied by the frontend and forwarded
+unchanged through the SDK; the SDK does not derive, normalize, or complete it
+from Host, Origin, or configuration. `invite_code` remains the frozen wire
+field and is a channel identifier only.
 
 The gateway HTTP surface is anchored to frozen chapter `06`, document version
-`v0.9`, and the 2026-08-05 SDK-001 freeze baseline. The five-route HTTP
+`v0.9`, and the 2026-08-05 SDK-001 freeze baseline. The four-route HTTP
 contract remains owned by Sluice; this SDK baseline records the anchor rather
 than duplicating route implementation or an additional HTTP contract source.
 

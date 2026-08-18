@@ -18,8 +18,6 @@ import (
 	"time"
 )
 
-const gatewaySiteContextPath = "/runtime/v1/registration/site-context"
-
 // GatewayDeliveryMode 由 Gateway 侧 SKU 目录决定。SDK 提供分开的调用方法，
 // delivery_mode 不会进入请求体，也不会被 SDK 静默覆盖。
 type GatewayDeliveryMode string
@@ -145,14 +143,6 @@ type GatewayCancelResponse struct {
 	InvocationID string
 	Accepted     bool
 	Snapshot     *GatewayInvocationSnapshot
-}
-
-// GatewaySiteContext 是一次成功的无认证 site-context 交换；SiteContextToken 使用
-// SecretString，只能通过显式操作 reveal。
-type GatewaySiteContext struct {
-	RequestID        string       `json:"request_id"`
-	SiteContextToken SecretString `json:"site_context_token"`
-	ExpiresAtMS      int64        `json:"expires_at_ms"`
 }
 
 type gatewayClientConfig struct {
@@ -527,69 +517,6 @@ func (client *GatewayClient) Cancel(ctx context.Context, invocationID, idempoten
 	return result, nil
 }
 
-// GatewaySiteContextClient 与 GatewayClient 刻意分离：请求没有 Bearer token、actor、
-// assertion，也不接受调用方传入 site 数据。
-type GatewaySiteContextClient struct {
-	baseURL    *url.URL
-	httpClient *http.Client
-}
-
-// NewGatewaySiteContextClient 构造独立的 site-context 客户端。
-func NewGatewaySiteContextClient(baseURL string, tlsConfig *tls.Config) (*GatewaySiteContextClient, error) {
-	parsedURL, err := parseGatewayBaseURL(baseURL)
-	if err != nil {
-		return nil, err
-	}
-	return &GatewaySiteContextClient{baseURL: parsedURL, httpClient: newGatewayHTTPClient(tlsConfig)}, nil
-}
-
-// Issue 发送契约要求的空 body site-context 请求。
-func (client *GatewaySiteContextClient) Issue(ctx context.Context) (GatewaySiteContext, error) {
-	if client == nil {
-		return GatewaySiteContext{}, fmt.Errorf("site-context client is not configured")
-	}
-	request, err := http.NewRequestWithContext(gatewayContext(ctx), http.MethodPost, client.endpoint(gatewaySiteContextPath), nil)
-	if err != nil {
-		return GatewaySiteContext{}, newGatewayError(GatewayInternalError, 0, "", "could not create site-context request")
-	}
-	request.Header.Set("Accept", "application/json")
-	response, err := client.httpClient.Do(request)
-	if err != nil {
-		if gatewayContext(ctx).Err() != nil {
-			return GatewaySiteContext{}, gatewayContext(ctx).Err()
-		}
-		return GatewaySiteContext{}, newGatewayError(GatewayInternalError, 0, "", "site-context HTTP request failed")
-	}
-	if response.StatusCode != http.StatusOK {
-		if response.StatusCode >= 400 {
-			return GatewaySiteContext{}, gatewayErrorFromResponse(response, isGatewaySiteContextErrorCode)
-		}
-		response.Body.Close()
-		return GatewaySiteContext{}, newGatewayProtocolError(response.StatusCode)
-	}
-	if !gatewayMediaType(response, "application/json") {
-		response.Body.Close()
-		return GatewaySiteContext{}, newGatewayProtocolError(response.StatusCode)
-	}
-	body, readErr := readGatewayResponseBody(response, 1<<20)
-	if readErr != nil {
-		return GatewaySiteContext{}, newGatewayProtocolError(response.StatusCode)
-	}
-	var wire struct {
-		RequestID        string `json:"request_id"`
-		SiteContextToken string `json:"site_context_token"`
-		ExpiresAtMS      int64  `json:"expires_at_ms"`
-	}
-	if err := json.Unmarshal(body, &wire); err != nil || wire.RequestID == "" || wire.SiteContextToken == "" || wire.ExpiresAtMS <= 0 {
-		return GatewaySiteContext{}, newGatewayProtocolError(response.StatusCode)
-	}
-	return GatewaySiteContext{
-		RequestID:        wire.RequestID,
-		SiteContextToken: newSecretString(wire.SiteContextToken),
-		ExpiresAtMS:      wire.ExpiresAtMS,
-	}, nil
-}
-
 func (client *GatewayClient) doInvocation(ctx context.Context, method, path, operation string, body []byte, idempotencyKey string, extra http.Header) (*http.Response, error) {
 	ctx = gatewayContext(ctx)
 	actor, err := client.resolveActor(ctx)
@@ -674,15 +601,6 @@ func (client *GatewayClient) resolveActor(ctx context.Context) (string, error) {
 }
 
 func (client *GatewayClient) endpoint(path string) string {
-	copyURL := *client.baseURL
-	copyURL.Path = strings.TrimRight(client.baseURL.Path, "/") + path
-	copyURL.RawPath = ""
-	copyURL.RawQuery = ""
-	copyURL.Fragment = ""
-	return copyURL.String()
-}
-
-func (client *GatewaySiteContextClient) endpoint(path string) string {
 	copyURL := *client.baseURL
 	copyURL.Path = strings.TrimRight(client.baseURL.Path, "/") + path
 	copyURL.RawPath = ""

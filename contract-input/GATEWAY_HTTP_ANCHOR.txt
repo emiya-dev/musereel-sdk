@@ -1,9 +1,15 @@
 source_repo: sluice (internal)
 source_doc: docs/product/06-工作台对接契约.md
-sections: §4.2 (invocation 四路由) + §5.1 (site-context 签发)
-source_commit: 94de20732e1a3c5f42c9d1d5f42e293fdf8f42d0
-route_count: 5
-frozen_at: 2026-08-05
+sections: §4.2 (invocation 四路由)
+source_commit: 32c0ad41cb7370992eb18e3b33109038147add9b
+route_count: 4
+frozen_at: 2026-08-18
 purpose: SDK gateway HTTP 面的同步锚点——HTTP 契约的唯一事实源是 sluice 仓上述文档
-  章节在 source_commit 时点的内容，本仓不复制路由细节；SDK-003 实现前须按此锚点
-  重新核对，源文档变更时更新本锚并按 CONTRIBUTING 的 breaking 纪律评估。
+  章节在 source_commit 时点的内容，本仓不复制路由细节；实现前须按此锚点重新核对，
+  源文档变更时更新本锚并按 CONTRIBUTING 的 breaking 纪律评估。
+note: 本锚 2026-08-05 版为 route_count 5、sections 含「§5.1 (site-context 签发)」。
+  BE-166(S74) 之后 gateway 的 site-context 公网签发路由已删除（`httpapi/router.go`
+  只注册四条 invocation 路由，`router_test.go` 有负对照钉死旧路径必须 404 而非 405），
+  注册链路整体移到 runtime gRPC 的 ResolveRegistration / ConfirmRegistration。
+  §5.1 仍然存在且仍管注册，但它**不再是 gateway HTTP 面的一部分**，
+  因此退出本锚——这是范围变更，不是遗漏。
