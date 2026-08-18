@@ -241,6 +241,7 @@ message SkuCatalogReply {
   repeated SkuCatalogItem skus = 4;
 }
 
+// SkuCatalogItem 是公开 SKU、档位寻址事实及其当前生效售价。
 message SkuCatalogItem {
   string sku_id = 1;
   string display_name = 2;
@@ -250,6 +251,8 @@ message SkuCatalogItem {
   bytes request_schema_jcs = 6;
   SkuPublicPrice price = 7;
   repeated SkuSupportedSchema supported_request_schemas = 8;
+  // quality_tiers 按 quality ASCII 升序排列；每个档位字段都参与 catalog_version hash。
+  repeated QualityTier quality_tiers = 9;
 }
 
 message SkuSupportedSchema {
@@ -364,4 +367,17 @@ message ListSiteBrandingReply {
   string request_id                = 1;
   repeated SiteBrandingItem sites  = 2;
   string snapshot_revision         = 3;  // 整批快照版本，供工作台跳过无变化的刷新
+}
+
+// QualityTier 是公开 SKU 的一个质量档位；它只表达工作台寻址所需的档位事实。
+message QualityTier {
+  // quality 是档位键，必须与公开请求 schema 的 parameters.quality.values 对齐。
+  string quality = 1;
+  // parameter_schema_jcs 是该档参数值域切片，复用 request_schema_jcs 中
+  // parameters.quality.rules_by_value.<quality> 的 RFC 8785 JCS；公共参数的通用规则仍在主 schema 中。
+  bytes parameter_schema_jcs = 2;
+  // vendor_model 是该档位的平台供给上游模型标识；00099 保证同档所有平台 entry 使用同一模型，
+  // 因而它不表示所有调用必然落到的模型。BYOK customer binding 使用客户自带合同的费率，
+  // 不在 route_policy_entry 约束内（BE-171 B6）；此字段只表达平台供给语义。
+  string vendor_model = 3;
 }
