@@ -5,6 +5,7 @@ package conformance
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -14,6 +15,9 @@ import (
 
 // TestSluiceComposeConformance 只接受真实 compose 环境；环境不全时显式失败。
 func TestSluiceComposeConformance(t *testing.T) {
+	if testing.Short() {
+		t.Skip("真实 sluice compose conformance 在 -short 下跳过")
+	}
 	cfg, err := loadConfig()
 	if err != nil {
 		t.Fatalf("conformance 未配置：%v", err)
@@ -22,6 +26,244 @@ func TestSluiceComposeConformance(t *testing.T) {
 	defer cancel()
 	if err := run(ctx, cfg); err != nil {
 		t.Fatalf("conformance 失败：%v", err)
+	}
+}
+
+func TestArtifactRefsFromResultBySKU(t *testing.T) {
+	const invocationID = "74fa0dff-0000-0000-0000-000000000001"
+	videoID := "11111111-1111-1111-1111-111111111111"
+	imageIDOne := "22222222-2222-2222-2222-222222222222"
+	imageIDTwo := "33333333-3333-3333-3333-333333333333"
+	musicID := "44444444-4444-4444-4444-444444444444"
+	speechID := "55555555-5555-5555-5555-555555555555"
+	artifactPath := func(artifactID string) string {
+		return "/runtime/v1/invocations/" + invocationID + "/artifacts/" + artifactID
+	}
+
+	tests := []struct {
+		name     string
+		skuID    string
+		result   json.RawMessage
+		wantRefs []conformanceArtifactRef
+		wantErr  string
+	}{
+		{
+			name:     "text has no artifact keys",
+			skuID:    textGenerateSKU,
+			result:   json.RawMessage(`{"text":"ok"}`),
+			wantRefs: nil,
+		},
+		{
+			name:     "moderation receipt is not an artifact",
+			skuID:    moderationGenerateSKU,
+			result:   json.RawMessage(`{"moderation_receipt":"e14-conformance"}`),
+			wantRefs: nil,
+		},
+		{
+			name:     "lyrics has no artifact keys",
+			skuID:    lyricsGenerateSKU,
+			result:   json.RawMessage(`{"lyrics":"a line"}`),
+			wantRefs: nil,
+		},
+		{
+			name:  "video uses singular artifact",
+			skuID: videoGenerateSKU,
+			result: json.RawMessage(fmt.Sprintf(
+				`{"artifact":{"artifact_id":%q,"download_path":%q,"media_type":"video/mp4"}}`,
+				videoID,
+				artifactPath(videoID),
+			)),
+			wantRefs: []conformanceArtifactRef{{artifactID: videoID, downloadPath: artifactPath(videoID)}},
+		},
+		{
+			name:  "image uses every artifact",
+			skuID: imageGenerateSKU,
+			result: json.RawMessage(fmt.Sprintf(
+				`{"artifacts":[{"artifact_id":%q,"download_path":%q},{"artifact_id":%q,"download_path":%q}],"delivered_image_count":"2","requested_image_count":"2"}`,
+				imageIDOne,
+				artifactPath(imageIDOne),
+				imageIDTwo,
+				artifactPath(imageIDTwo),
+			)),
+			wantRefs: []conformanceArtifactRef{
+				{artifactID: imageIDOne, downloadPath: artifactPath(imageIDOne)},
+				{artifactID: imageIDTwo, downloadPath: artifactPath(imageIDTwo)},
+			},
+		},
+		{
+			name:  "music uses singular artifact",
+			skuID: musicGenerateSKU,
+			result: json.RawMessage(fmt.Sprintf(
+				`{"artifact":{"artifact_id":%q,"download_path":%q}}`,
+				musicID,
+				artifactPath(musicID),
+			)),
+			wantRefs: []conformanceArtifactRef{{artifactID: musicID, downloadPath: artifactPath(musicID)}},
+		},
+		{
+			name:  "speech uses singular artifact",
+			skuID: speechGenerateSKU,
+			result: json.RawMessage(fmt.Sprintf(
+				`{"artifact":{"artifact_id":%q,"download_path":%q}}`,
+				speechID,
+				artifactPath(speechID),
+			)),
+			wantRefs: []conformanceArtifactRef{{artifactID: speechID, downloadPath: artifactPath(speechID)}},
+		},
+		{
+			name:    "artifact SKU with empty result fails",
+			skuID:   videoGenerateSKU,
+			result:  nil,
+			wantErr: "终态 snapshot.result 为空",
+		},
+		{
+			name:  "artifact SKU without artifact id fails",
+			skuID: musicGenerateSKU,
+			result: json.RawMessage(fmt.Sprintf(
+				`{"artifact":{"download_path":%q}}`,
+				artifactPath(musicID),
+			)),
+			wantErr: "缺少 artifact_id",
+		},
+		{
+			name:    "non artifact SKU with artifacts fails",
+			skuID:   textGenerateSKU,
+			result:  json.RawMessage(`{"artifacts":[],"delivered_image_count":"0"}`),
+			wantErr: "不得包含 artifact 或 artifacts",
+		},
+		{
+			name:  "image count must match artifacts",
+			skuID: imageGenerateSKU,
+			result: json.RawMessage(fmt.Sprintf(
+				`{"artifacts":[{"artifact_id":%q,"download_path":%q}],"delivered_image_count":"2"}`,
+				imageIDOne,
+				artifactPath(imageIDOne),
+			)),
+			wantErr: "长度=1，不等于 delivered_image_count=2",
+		},
+		{
+			name:  "artifact download path must bind invocation and id",
+			skuID: speechGenerateSKU,
+			result: json.RawMessage(fmt.Sprintf(
+				`{"artifact":{"artifact_id":%q,"download_path":"/runtime/v1/invocations/wrong/artifacts/%s"}}`,
+				speechID,
+				speechID,
+			)),
+			wantErr: "不等于服务端 artifact 路径",
+		},
+	}
+
+	for _, testCase := range tests {
+		testCase := testCase
+		t.Run(testCase.name, func(t *testing.T) {
+			got, err := artifactRefsFromResult(testCase.skuID, invocationID, testCase.result)
+			if testCase.wantErr != "" {
+				if err == nil {
+					t.Fatalf("sku=%q result unexpectedly accepted; want error containing %q", testCase.skuID, testCase.wantErr)
+				}
+				if !strings.Contains(err.Error(), testCase.wantErr) {
+					t.Fatalf("sku=%q error=%q, want substring %q", testCase.skuID, err, testCase.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("sku=%q result rejected: %v", testCase.skuID, err)
+			}
+			if len(got) != len(testCase.wantRefs) {
+				t.Fatalf("sku=%q artifact ref count=%d, want %d", testCase.skuID, len(got), len(testCase.wantRefs))
+			}
+			for index, want := range testCase.wantRefs {
+				if got[index].artifactID != want.artifactID {
+					t.Fatalf("sku=%q ref[%d].artifactID=%q, want %q", testCase.skuID, index, got[index].artifactID, want.artifactID)
+				}
+				if got[index].downloadPath != want.downloadPath {
+					t.Fatalf("sku=%q ref[%d].downloadPath=%q, want %q", testCase.skuID, index, got[index].downloadPath, want.downloadPath)
+				}
+			}
+		})
+	}
+}
+
+// TestArtifactLegMarker 钉住这条腿的机器可读标记，以及两处 SKU 分类必须互相钉住这件事。
+// 标记是外部矩阵判「artifact 传输腿跑没跑过」的唯一锚，所以它的**措辞**和
+// 它**什么时候必须拒绝出具**同样重要：count=0 的 downloaded、以及分类漂移导致的
+// 「非产物 SKU 却解出了引用」，都会让一条没跑的腿拿到跑过的凭证。
+func TestArtifactLegMarker(t *testing.T) {
+	tests := []struct {
+		name       string
+		skuID      string
+		refCount   int
+		wantMarker string
+		wantErr    string
+	}{
+		{
+			name:       "non artifact sku is skipped",
+			skuID:      textGenerateSKU,
+			refCount:   0,
+			wantMarker: "ARTIFACT_LEG=skipped sku=text.generate.v1",
+		},
+		{
+			name:       "moderation is skipped",
+			skuID:      moderationGenerateSKU,
+			refCount:   0,
+			wantMarker: "ARTIFACT_LEG=skipped sku=moderation.generate.v1",
+		},
+		{
+			name:       "image reports every downloaded artifact",
+			skuID:      imageGenerateSKU,
+			refCount:   2,
+			wantMarker: "ARTIFACT_LEG=downloaded sku=image.generate.v1 count=2",
+		},
+		{
+			name:       "music reports its single artifact",
+			skuID:      musicGenerateSKU,
+			refCount:   1,
+			wantMarker: "ARTIFACT_LEG=downloaded sku=music.generate.v1 count=1",
+		},
+		{
+			name:     "artifact sku with zero refs must not claim downloaded",
+			skuID:    imageGenerateSKU,
+			refCount: 0,
+			wantErr:  "artifact 分类自相矛盾",
+		},
+		{
+			name:     "non artifact sku with refs must not claim skipped",
+			skuID:    textGenerateSKU,
+			refCount: 1,
+			wantErr:  "artifact 分类自相矛盾",
+		},
+		{
+			name:     "unknown sku with refs is a contradiction",
+			skuID:    "unknown.generate.v1",
+			refCount: 1,
+			wantErr:  "artifact 分类自相矛盾",
+		},
+	}
+
+	for _, testCase := range tests {
+		testCase := testCase
+		t.Run(testCase.name, func(t *testing.T) {
+			marker, err := artifactLegMarker(testCase.skuID, testCase.refCount)
+			if testCase.wantErr != "" {
+				if err == nil {
+					t.Fatalf("sku=%q refCount=%d 竟然出具了标记 %q，期望报错含 %q",
+						testCase.skuID, testCase.refCount, marker, testCase.wantErr)
+				}
+				if !strings.Contains(err.Error(), testCase.wantErr) {
+					t.Fatalf("sku=%q error=%q，期望含子串 %q", testCase.skuID, err, testCase.wantErr)
+				}
+				if marker != "" {
+					t.Fatalf("sku=%q 报错时仍返回了标记 %q，矩阵会拿它当跑过的凭证", testCase.skuID, marker)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("sku=%q refCount=%d 被拒: %v", testCase.skuID, testCase.refCount, err)
+			}
+			if marker != testCase.wantMarker {
+				t.Fatalf("sku=%q marker=%q, want %q", testCase.skuID, marker, testCase.wantMarker)
+			}
+		})
 	}
 }
 

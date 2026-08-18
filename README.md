@@ -57,7 +57,7 @@ The pin-only check is:
 
 ## Conformance（手动 build tag）
 
-Conformance 不进入默认 `check`；先确认骨架可编译，再在目标环境运行：
+Conformance 的离线单测由默认 `check` 以 `go test -tags conformance -short ./...` 门禁；真实 compose 环境运行：
 
 ```sh
 go build -tags conformance ./...
@@ -74,8 +74,7 @@ go test -tags conformance ./conformance
 `MUSEREEL_CONFORMANCE_INSTANCE_ID`、`MUSEREEL_CONFORMANCE_TENANT_ID`、
 `MUSEREEL_CONFORMANCE_SESSION_ID`、`MUSEREEL_CONFORMANCE_ACTOR`、
 `MUSEREEL_CONFORMANCE_SKU_ID`、`MUSEREEL_CONFORMANCE_TASK_REF`、
-`MUSEREEL_CONFORMANCE_DELIVERY_MODE`（`async` 或 `stream`）、
-`MUSEREEL_CONFORMANCE_ARTIFACT_ID`；可选项为
+`MUSEREEL_CONFORMANCE_DELIVERY_MODE`（`async` 或 `stream`）。可选项为
 `MUSEREEL_CONFORMANCE_MTLS_SERVER_NAME`、
 `MUSEREEL_CONFORMANCE_SPEC_SCHEMA_VERSION`（默认 `v1`）、
 `MUSEREEL_CONFORMANCE_SPEC_INPUT_JSON`、
@@ -83,7 +82,23 @@ go test -tags conformance ./conformance
 `MUSEREEL_CONFORMANCE_MODERATION_RECEIPT`、
 `MUSEREEL_CONFORMANCE_EVENT_ID`。
 
-目标由 sluice 侧 compose 提供假上游（E14 夹具）；环境缺失时测试会 fail-fast 输出「需要 sluice compose 环境」，不会 skip。
+产物 SKU 的 artifact ID **不通过环境变量提供**：契约要求 `{artifact_id}` 由服务端签发
+（`invocation_artifact.id` 是随机 UUID），客户端预置的值不可能命中。harness 从本次调用的
+终态 `snapshot.result` 解析该 ID，再经 SDK 下载接口校验 `Content-Digest`。
+
+这条腿跑没跑过，唯一的机器可读锚是 stdout 上的一行：
+
+```
+ARTIFACT_LEG=downloaded sku=<sku_id> count=<n>   # 产物 SKU，n 必 ≥ 1
+ARTIFACT_LEG=skipped sku=<sku_id>                # 非产物 SKU（text / lyrics / moderation）
+```
+
+⚠ 单跑一个非产物 SKU 只会打 `skipped`——那证明不了 artifact 传输腿是通的。
+要覆盖这条腿，驱动矩阵必须让 `downloaded` 在 video / image / music / speech 上各出现一次。
+
+目标由 sluice 侧 compose 提供假上游（E14 夹具）。缺环境时 `TestSluiceComposeConformance`
+会 fail-fast 输出「需要 sluice compose 环境」而不是 skip；**唯一的例外是 `-short`**，
+它整条跳过这个 compose 腿，好让同包的离线单测能进默认 `check`。
 
 ## S31 boundary
 
