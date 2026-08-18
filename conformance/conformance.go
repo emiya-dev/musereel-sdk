@@ -32,8 +32,38 @@ const (
 	musicGenerateSKU      = "music.generate.v1"
 	speechGenerateSKU     = "speech.generate.v1"
 
-	defaultConformanceSchemaVersion = "v1" // 统一值待 BE-173，届时改成常量。
+	conformanceSchemaVersionOne   = "1"
+	conformanceVideoSchemaVersion = "3"
 )
+
+var conformanceSchemaVersionBySKU = map[string]string{
+	textGenerateSKU:       conformanceSchemaVersionOne,
+	moderationGenerateSKU: conformanceSchemaVersionOne,
+	videoGenerateSKU:      conformanceVideoSchemaVersion,
+	imageGenerateSKU:      conformanceSchemaVersionOne,
+	lyricsGenerateSKU:     conformanceSchemaVersionOne,
+	musicGenerateSKU:      conformanceSchemaVersionOne,
+	speechGenerateSKU:     conformanceSchemaVersionOne,
+}
+
+func defaultSchemaVersionForSKU(skuID string) (string, error) {
+	schemaVersion, ok := conformanceSchemaVersionBySKU[skuID]
+	if !ok {
+		return "", fmt.Errorf("MUSEREEL_CONFORMANCE_SKU_ID 必须是 gateway capability 串，未知值 %q", skuID)
+	}
+	return schemaVersion, nil
+}
+
+func resolveConformanceSchemaVersion(skuID, override string) (string, error) {
+	defaultVersion, err := defaultSchemaVersionForSKU(skuID)
+	if err != nil {
+		return "", err
+	}
+	if override = strings.TrimSpace(override); override != "" {
+		return override, nil
+	}
+	return defaultVersion, nil
+}
 
 // config 是 E14 compose 提供的 conformance 运行输入。
 type config struct {
@@ -94,11 +124,15 @@ func loadConfig() (config, error) {
 		return config{}, fmt.Errorf("需要 sluice compose 环境：MUSEREEL_CONFORMANCE_DELIVERY_MODE 必须是 async 或 stream")
 	}
 
-	schemaVersion := strings.TrimSpace(os.Getenv("MUSEREEL_CONFORMANCE_SPEC_SCHEMA_VERSION"))
-	if schemaVersion == "" {
-		schemaVersion = defaultConformanceSchemaVersion
+	skuID := values["MUSEREEL_CONFORMANCE_SKU_ID"]
+	schemaVersion, err := resolveConformanceSchemaVersion(
+		skuID,
+		os.Getenv("MUSEREEL_CONFORMANCE_SPEC_SCHEMA_VERSION"),
+	)
+	if err != nil {
+		return config{}, err
 	}
-	defaultInput, defaultParameters, err := buildConformanceSpec(values["MUSEREEL_CONFORMANCE_SKU_ID"], schemaVersion)
+	defaultInput, defaultParameters, err := buildConformanceSpec(skuID, schemaVersion)
 	if err != nil {
 		return config{}, err
 	}
@@ -134,7 +168,7 @@ func loadConfig() (config, error) {
 		tenantID:      values["MUSEREEL_CONFORMANCE_TENANT_ID"],
 		sessionID:     values["MUSEREEL_CONFORMANCE_SESSION_ID"],
 		actor:         values["MUSEREEL_CONFORMANCE_ACTOR"],
-		skuID:         values["MUSEREEL_CONFORMANCE_SKU_ID"],
+		skuID:         skuID,
 		schemaVersion: schemaVersion,
 		taskRef:       values["MUSEREEL_CONFORMANCE_TASK_REF"],
 		deliveryMode:  deliveryMode,
@@ -147,20 +181,23 @@ func loadConfig() (config, error) {
 }
 
 // buildConformanceSpec 为 gateway 的每个能力串构造最小合法 input/parameters。
-// schema_version 只由单一 MUSEREEL_CONFORMANCE_SPEC_SCHEMA_VERSION 提供；
-// 统一值待 BE-173，届时改成常量。
+// schemaVersion 是外层 spec 已按 SKU 解析后的值。
 func buildConformanceSpec(skuID, schemaVersion string) (json.RawMessage, json.RawMessage, error) {
 	switch skuID {
 	case textGenerateSKU:
 		return json.RawMessage(`{"messages":[{"role":"user","content":"sdk005-conformance"}]}`),
 			json.RawMessage(`{"max_output_tokens":"64"}`), nil
 	case moderationGenerateSKU:
+		targetSchemaVersion, err := defaultSchemaVersionForSKU(textGenerateSKU)
+		if err != nil {
+			return nil, nil, fmt.Errorf("解析 moderation target schema_version 失败: %w", err)
+		}
 		targetSpec, err := json.Marshal(struct {
 			SchemaVersion string          `json:"schema_version"`
 			Input         json.RawMessage `json:"input"`
 			Parameters    json.RawMessage `json:"parameters"`
 		}{
-			SchemaVersion: schemaVersion,
+			SchemaVersion: targetSchemaVersion,
 			Input:         json.RawMessage(`{"messages":[{"role":"user","content":"sdk005-conformance"}]}`),
 			Parameters:    json.RawMessage(`{"max_output_tokens":"64"}`),
 		})
