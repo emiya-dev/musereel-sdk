@@ -84,7 +84,6 @@ type config struct {
 	deliveryMode  sdk.GatewayDeliveryMode
 	input         json.RawMessage
 	parameters    json.RawMessage
-	moderation    string
 	eventID       string
 }
 
@@ -144,10 +143,6 @@ func loadConfig() (config, error) {
 	if len(parameters) == 0 {
 		parameters = defaultParameters
 	}
-	moderation := strings.TrimSpace(os.Getenv("MUSEREEL_CONFORMANCE_MODERATION_RECEIPT"))
-	if moderation == "" {
-		moderation = "e14-conformance"
-	}
 	eventID := strings.TrimSpace(os.Getenv("MUSEREEL_CONFORMANCE_EVENT_ID"))
 	if eventID == "" {
 		eventID = fmt.Sprintf("sdk005-conformance-%d", time.Now().UnixNano())
@@ -174,7 +169,6 @@ func loadConfig() (config, error) {
 		deliveryMode:  deliveryMode,
 		input:         input,
 		parameters:    parameters,
-		moderation:    moderation,
 		eventID:       eventID,
 	}, nil
 }
@@ -286,6 +280,231 @@ func moderationReceiptForSKU(skuID, receipt string) string {
 		return ""
 	}
 	return receipt
+}
+
+const (
+	receiptLegMain   = "main"
+	receiptLegCancel = "cancel"
+)
+
+type moderationInvocationResult struct {
+	Kind               string `json:"kind"`
+	Verdict            string `json:"verdict"`
+	ModerationReceipt  string `json:"moderation_receipt"`
+	ReceiptExpiresAtMS *int64 `json:"receipt_expires_at_ms"`
+}
+
+// buildModerationRequest embeds the already serialized target spec in the
+// moderation input. The target spec itself must not be reconstructed for this
+// call: target_spec is the exact object that the target create will submit.
+func buildModerationRequest(cfg config, targetSpecBytes []byte) (sdk.GatewayCreateRequest, error) {
+	if len(bytes.TrimSpace(targetSpecBytes)) == 0 || !json.Valid(targetSpecBytes) {
+		return sdk.GatewayCreateRequest{}, fmt.Errorf("目标 spec bytes 不是合法 JSON")
+	}
+	moderationSchemaVersion, err := defaultSchemaVersionForSKU(moderationGenerateSKU)
+	if err != nil {
+		return sdk.GatewayCreateRequest{}, fmt.Errorf("解析 moderation schema_version 失败: %w", err)
+	}
+	moderationInput, err := json.Marshal(struct {
+		TargetSKUID string          `json:"target_sku_id"`
+		TargetSpec  json.RawMessage `json:"target_spec"`
+	}{
+		TargetSKUID: cfg.skuID,
+		TargetSpec:  json.RawMessage(targetSpecBytes),
+	})
+	if err != nil {
+		return sdk.GatewayCreateRequest{}, fmt.Errorf("构造 moderation target input 失败: %w", err)
+	}
+	return sdk.GatewayCreateRequest{
+		SKU:     moderationGenerateSKU,
+		TaskRef: cfg.taskRef,
+		Spec: sdk.GatewayInvocationSpec{
+			SchemaVersion: moderationSchemaVersion,
+			Input:         json.RawMessage(moderationInput),
+			Parameters:    json.RawMessage(`{}`),
+		},
+		// F5: moderation is the receipt-producing invocation and must carry
+		// the empty receipt key, not an omitted key or an external token.
+		ModerationReceipt: "",
+	}, nil
+}
+
+func mintModerationReceipt(ctx context.Context, cfg config, client *sdk.GatewayClient, targetSpecBytes []byte, leg string) (string, error) {
+	if leg != receiptLegMain && leg != receiptLegCancel {
+		return "", fmt.Errorf("收据铸造腿无效: %q", leg)
+	}
+	moderationRequest, err := buildModerationRequest(cfg, targetSpecBytes)
+	if err != nil {
+		return "", receiptMintInvocationFailure(cfg.skuID, err)
+	}
+	response, err := createForMode(ctx, client, moderationRequest, conformanceKey("receipt-"+leg), cfg.deliveryMode)
+	if err != nil {
+		return "", receiptMintInvocationFailure(cfg.skuID, err)
+	}
+	if response.AlreadyExists {
+		return "", receiptMintInvocationFailure(cfg.skuID, fmt.Errorf("moderation create 意外暴露 AlreadyExists"))
+	}
+	if response.StatusCode != http.StatusAccepted && response.StatusCode != http.StatusOK {
+		return "", receiptMintInvocationFailure(cfg.skuID,
+			fmt.Errorf("moderation create status=%d，不在 202/200 封闭集", response.StatusCode))
+	}
+
+	invocationID, err := invocationIDFromCreate(ctx, response)
+	if err != nil {
+		return "", receiptMintInvocationFailure(cfg.skuID, err)
+	}
+	snapshot, err := pollToTerminal(ctx, client, invocationID)
+	if err != nil {
+		return "", receiptMintInvocationFailure(cfg.skuID, err)
+	}
+	if err := assertSuccessfulGatewayTerminal(snapshot); err != nil {
+		return "", receiptMintInvocationFailure(cfg.skuID, err)
+	}
+
+	moderationResult, err := parseModerationInvocationResult(snapshot.Result)
+	if err != nil {
+		return "", receiptMintInvocationFailure(cfg.skuID, err)
+	}
+	return receiptFromModerationResult(cfg.skuID, moderationResult)
+}
+
+func parseModerationInvocationResult(result json.RawMessage) (moderationInvocationResult, error) {
+	if len(bytes.TrimSpace(result)) == 0 {
+		return moderationInvocationResult{}, fmt.Errorf("moderation 终态 result 为空")
+	}
+	var moderationResult moderationInvocationResult
+	if err := json.Unmarshal(result, &moderationResult); err != nil {
+		return moderationInvocationResult{}, fmt.Errorf("moderation 终态 result 无效: %w", err)
+	}
+	if moderationResult.Kind != "moderation" {
+		return moderationInvocationResult{}, fmt.Errorf("moderation 终态 result.kind=%q，不是 moderation", moderationResult.Kind)
+	}
+	return moderationResult, nil
+}
+
+func receiptFromModerationResult(skuID string, moderationResult moderationInvocationResult) (string, error) {
+	if moderationResult.Verdict != "pass" {
+		return "", fmt.Errorf(
+			"RECEIPT_CHAIN=mint_failed sku=%s reason=moderation_verdict_not_pass verdict=%q",
+			skuID, moderationResult.Verdict)
+	}
+	if strings.TrimSpace(moderationResult.ModerationReceipt) == "" {
+		return "", fmt.Errorf(
+			"RECEIPT_CHAIN=mint_failed sku=%s reason=moderation_pass_receipt_empty",
+			skuID)
+	}
+	return moderationResult.ModerationReceipt, nil
+}
+
+func receiptMintInvocationFailure(skuID string, err error) error {
+	if gatewayErrorHasCode(err, sdk.GatewayInvalidInvocationRequest) {
+		return fmt.Errorf(
+			"RECEIPT_CHAIN=blocked sku=%s reason=hub_target_shape_unsupported: 中枢当前只能审核 text 形与 video 形目标: %w",
+			skuID, err)
+	}
+	return fmt.Errorf(
+		"RECEIPT_CHAIN=mint_failed sku=%s reason=moderation_invocation_failed: %w",
+		skuID, err)
+}
+
+func gatewayErrorHasCode(err error, code string) bool {
+	var gatewayErr *sdk.GatewayError
+	return errors.As(err, &gatewayErr) && gatewayErr != nil && gatewayErr.Code == code
+}
+
+// The receipt markers are the conformance evidence for the compliance leg.
+// Just like artifactLegMarker, contradictory SKU classification is an error:
+// a marker must never testify for a leg that did not actually run.
+func receiptChainSkippedMarker(skuID, receipt string) (string, error) {
+	if skuID != moderationGenerateSKU {
+		return "", fmt.Errorf("收据分类自相矛盾: 非 moderation SKU=%s 不得打 skipped", skuID)
+	}
+	if receipt != "" {
+		return "", fmt.Errorf("收据分类自相矛盾: moderation SKU=%s 不得携带收据 %q", skuID, receipt)
+	}
+	return fmt.Sprintf("RECEIPT_CHAIN=skipped sku=%s", skuID), nil
+}
+
+func receiptChainMintedMarker(skuID, leg, taskRef, receipt string) (string, error) {
+	if err := validateReceiptLeg(leg); err != nil {
+		return "", err
+	}
+	if skuID == moderationGenerateSKU {
+		return "", fmt.Errorf("收据分类自相矛盾: moderation SKU=%s 不得铸造收据", skuID)
+	}
+	if strings.TrimSpace(receipt) == "" {
+		return "", fmt.Errorf("收据分类自相矛盾: 非 moderation SKU=%s 没有已铸造收据", skuID)
+	}
+	return fmt.Sprintf("RECEIPT_CHAIN=minted sku=%s leg=%s task_ref=%s", skuID, leg, taskRef), nil
+}
+
+func receiptChainPresentedMarker(skuID, leg, receipt string) (string, error) {
+	if err := validateReceiptLeg(leg); err != nil {
+		return "", err
+	}
+	if skuID == moderationGenerateSKU {
+		return "", fmt.Errorf("收据分类自相矛盾: moderation SKU=%s 不得打 presented", skuID)
+	}
+	if strings.TrimSpace(receipt) == "" {
+		return "", fmt.Errorf("收据分类自相矛盾: 非 moderation SKU=%s 没有可呈递收据", skuID)
+	}
+	return fmt.Sprintf("RECEIPT_CHAIN=presented sku=%s leg=%s", skuID, leg), nil
+}
+
+func validateReceiptLeg(leg string) error {
+	switch leg {
+	case receiptLegMain, receiptLegCancel:
+		return nil
+	default:
+		return fmt.Errorf("收据腿无效: %q", leg)
+	}
+}
+
+func targetCreateFailure(skuID, operation string, err error) error {
+	var gatewayErr *sdk.GatewayError
+	if errors.As(err, &gatewayErr) && gatewayErr != nil && gatewayErr.Code == sdk.GatewayModerationInvalidRequest {
+		return fmt.Errorf(
+			"gateway %s 失败: 收据链被中枢拒绝 sku=%s code=%s details=%s: %w",
+			operation, skuID, gatewayErr.Code, gatewayErrorDetailsJSON(gatewayErr.Details), err)
+	}
+	return fmt.Errorf("gateway %s 失败 sku=%s: %w", operation, skuID, err)
+}
+
+func gatewayErrorDetailsJSON(details map[string]any) string {
+	if details == nil {
+		return "null"
+	}
+	encoded, err := json.Marshal(details)
+	if err != nil {
+		return fmt.Sprintf("%v", details)
+	}
+	return string(encoded)
+}
+
+func replayProbeMarker(ctx context.Context, client *sdk.GatewayClient, request sdk.GatewayCreateRequest, key string, mode sdk.GatewayDeliveryMode, skuID string) (string, error) {
+	response, err := createForMode(ctx, client, request, key, mode)
+	if err != nil {
+		return receiptReplayResultMarker(skuID, sdk.GatewayCreateResponse{}, err)
+	}
+	if response.Stream != nil {
+		defer response.Stream.Close()
+	}
+	return receiptReplayResultMarker(skuID, response, nil)
+}
+
+func receiptReplayResultMarker(skuID string, response sdk.GatewayCreateResponse, err error) (string, error) {
+	if err != nil {
+		if gatewayErrorHasCode(err, sdk.GatewayModerationInvalidRequest) || gatewayErrorHasCode(err, sdk.GatewayComplianceRejected) {
+			return fmt.Sprintf("RECEIPT_CHAIN=replay_rejected sku=%s", skuID), nil
+		}
+		return "", fmt.Errorf("gateway receipt replay probe 失败: %w", err)
+	}
+	if response.AlreadyExists || (response.StatusCode != http.StatusAccepted && response.StatusCode != http.StatusOK) {
+		return "", fmt.Errorf(
+			"gateway receipt replay probe status=%d already_exists=%t，不在 202/200 封闭集",
+			response.StatusCode, response.AlreadyExists)
+	}
+	return fmt.Sprintf("RECEIPT_CHAIN=replay_accepted sku=%s", skuID), nil
 }
 
 type conformanceArtifactRef struct {
@@ -457,31 +676,68 @@ func artifactLegMarker(skuID string, refCount int) (string, error) {
 // runGateway 覆盖 token exchange、create、GET、幂等、cancel、ETag
 // 和 artifact Content-Digest 路径；所有 HTTP 交互都经过 GatewayClient。
 func runGateway(ctx context.Context, cfg config, client *sdk.GatewayClient) error {
-	request := sdk.GatewayCreateRequest{
+	targetSpec := sdk.GatewayInvocationSpec{
+		SchemaVersion: cfg.schemaVersion,
+		Input:         cfg.input,
+		Parameters:    cfg.parameters,
+	}
+	// Serialize the target spec exactly once. The bytes are embedded in the
+	// moderation input; the same targetSpec value is reused for every target
+	// create, including the cancel fixture and idempotency probes.
+	targetSpecBytes, err := json.Marshal(targetSpec)
+	if err != nil {
+		return fmt.Errorf("目标 spec 序列化失败: %w", err)
+	}
+
+	baseRequest := sdk.GatewayCreateRequest{
 		SKU:     cfg.skuID,
 		TaskRef: cfg.taskRef,
-		Spec: sdk.GatewayInvocationSpec{
-			SchemaVersion: cfg.schemaVersion,
-			Input:         cfg.input,
-			Parameters:    cfg.parameters,
-		},
-		ModerationReceipt: moderationReceiptForSKU(cfg.skuID, cfg.moderation),
+		Spec:    targetSpec,
 	}
+	mainReceipt := ""
+	if cfg.skuID == moderationGenerateSKU {
+		marker, markerErr := receiptChainSkippedMarker(cfg.skuID, mainReceipt)
+		if markerErr != nil {
+			return markerErr
+		}
+		fmt.Println(marker)
+	} else {
+		mainReceipt, err = mintModerationReceipt(ctx, cfg, client, targetSpecBytes, receiptLegMain)
+		if err != nil {
+			return err
+		}
+		marker, markerErr := receiptChainMintedMarker(cfg.skuID, receiptLegMain, cfg.taskRef, mainReceipt)
+		if markerErr != nil {
+			return markerErr
+		}
+		fmt.Println(marker)
+	}
+	request := baseRequest
+	request.ModerationReceipt = moderationReceiptForSKU(cfg.skuID, mainReceipt)
+
 	createKey := conformanceKey("create")
 	first, err := createForMode(ctx, client, request, createKey, cfg.deliveryMode)
 	if err != nil {
-		return fmt.Errorf("gateway create 失败: %w", err)
+		return targetCreateFailure(cfg.skuID, "target create", err)
 	}
 	if first.AlreadyExists {
-		return fmt.Errorf("gateway 首次 create 意外暴露 AlreadyExists")
+		return targetCreateFailure(cfg.skuID, "target create", fmt.Errorf("首次 create 意外暴露 AlreadyExists"))
 	}
 	if first.StatusCode != http.StatusAccepted && first.StatusCode != http.StatusOK {
-		return fmt.Errorf("gateway create status=%d，不在 202/200 封闭集", first.StatusCode)
+		return targetCreateFailure(cfg.skuID, "target create",
+			fmt.Errorf("create status=%d，不在 202/200 封闭集", first.StatusCode))
 	}
 
 	invocationID, err := invocationIDFromCreate(ctx, first)
 	if err != nil {
-		return err
+		return targetCreateFailure(cfg.skuID, "target create", err)
+	}
+	if cfg.skuID != moderationGenerateSKU {
+		marker, markerErr := receiptChainPresentedMarker(cfg.skuID, receiptLegMain, request.ModerationReceipt)
+		if markerErr != nil {
+			return markerErr
+		}
+		fmt.Println(marker)
 	}
 	snapshot, err := pollToTerminal(ctx, client, invocationID)
 	if err != nil {
@@ -489,6 +745,14 @@ func runGateway(ctx context.Context, cfg config, client *sdk.GatewayClient) erro
 	}
 	if err := assertSuccessfulGatewayTerminal(snapshot); err != nil {
 		return err
+	}
+
+	if cfg.skuID != moderationGenerateSKU {
+		replayProbe, probeErr := replayProbeMarker(ctx, client, request, conformanceKey("receipt-replay"), cfg.deliveryMode, cfg.skuID)
+		if probeErr != nil {
+			return probeErr
+		}
+		fmt.Println(replayProbe)
 	}
 
 	replay, err := createForMode(ctx, client, request, createKey, cfg.deliveryMode)
@@ -516,13 +780,34 @@ func runGateway(ctx context.Context, cfg config, client *sdk.GatewayClient) erro
 	// 标记只在这条腿真跑完之后才打：下载中途失败会带着错误返回，不留下「跑过了」的痕迹。
 	fmt.Println(marker)
 
+	cancelRequest := baseRequest
+	cancelReceipt := ""
+	if cfg.skuID != moderationGenerateSKU {
+		cancelReceipt, err = mintModerationReceipt(ctx, cfg, client, targetSpecBytes, receiptLegCancel)
+		if err != nil {
+			return err
+		}
+		mintedMarker, markerErr := receiptChainMintedMarker(cfg.skuID, receiptLegCancel, cfg.taskRef, cancelReceipt)
+		if markerErr != nil {
+			return markerErr
+		}
+		fmt.Println(mintedMarker)
+	}
+	cancelRequest.ModerationReceipt = moderationReceiptForSKU(cfg.skuID, cancelReceipt)
 	cancelKey := conformanceKey("cancel")
-	cancelID, stream, err := createForCancel(ctx, client, request, cancelKey, cfg.deliveryMode)
+	cancelID, stream, err := createForCancel(ctx, client, cancelRequest, cancelKey, cfg.deliveryMode)
 	if err != nil {
-		return err
+		return targetCreateFailure(cfg.skuID, "cancel target create", err)
 	}
 	if stream != nil {
 		defer stream.Close()
+	}
+	if cfg.skuID != moderationGenerateSKU {
+		presentedMarker, markerErr := receiptChainPresentedMarker(cfg.skuID, receiptLegCancel, cancelRequest.ModerationReceipt)
+		if markerErr != nil {
+			return markerErr
+		}
+		fmt.Println(presentedMarker)
 	}
 	cancel, cancelErr := client.Cancel(ctx, cancelID, conformanceKey("cancel-request"))
 	cancelMarker, err := cancelLegMarker(cfg.skuID, cancel, cancelErr)
