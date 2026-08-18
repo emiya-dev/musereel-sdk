@@ -148,3 +148,39 @@ func TestGatewayTerminalSuccessAssertion(t *testing.T) {
 		})
 	}
 }
+
+// TestModerationSKUCarriesNoModerationReceipt 钉的是「moderation 自己就是产出收据的那一次调用」。
+//
+// 这不是风格问题：中枢对 moderation SKU 携带收据是显式拒绝，而该拒绝的内部码
+// compliance_invalid_request 不在 gateway 冻结公共码集合里，会被折叠成
+// internal_error / HTTP 500。⇒ 一旦这里回退，suite 收到的是「内部错误」，
+// 既看不出是自己多发了字段，也和真正的中枢故障完全同形。实测过一次：
+// 七 SKU 扫描里只有 moderation 报 500，gateway 侧零条错误日志、零 compliance 行。
+//
+// 断言必须逐 SKU 遍历而不是只测 moderation 一个：只测 moderation 的话，
+// 把实现改成「所有 SKU 都不带收据」照样绿，而那会让另外六个 SKU 的收据闸失去覆盖。
+func TestModerationSKUCarriesNoModerationReceipt(t *testing.T) {
+	const receipt = "e14-conformance"
+
+	t.Run(moderationGenerateSKU, func(t *testing.T) {
+		if got := moderationReceiptForSKU(moderationGenerateSKU, receipt); got != "" {
+			t.Fatalf("moderation SKU 必须不携带审核收据，实际 %q", got)
+		}
+	})
+
+	for _, skuID := range []string{
+		textGenerateSKU,
+		videoGenerateSKU,
+		imageGenerateSKU,
+		lyricsGenerateSKU,
+		musicGenerateSKU,
+		speechGenerateSKU,
+	} {
+		skuID := skuID
+		t.Run(skuID, func(t *testing.T) {
+			if got := moderationReceiptForSKU(skuID, receipt); got != receipt {
+				t.Fatalf("sku=%q 必须原样携带审核收据 %q，实际 %q", skuID, receipt, got)
+			}
+		})
+	}
+}
