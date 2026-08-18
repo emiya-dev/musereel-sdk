@@ -161,9 +161,6 @@ func WithGatewayClock(now Clock) GatewayClientOption {
 	}
 }
 
-// GatewayWithClock 是与既有 token-source WithClock 命名形状一致的别名。
-func GatewayWithClock(now Clock) GatewayClientOption { return WithGatewayClock(now) }
-
 // GatewayClient 封装四条带认证的 invocation 路由。
 type GatewayClient struct {
 	baseURL    *url.URL
@@ -204,12 +201,6 @@ func NewGatewayClient(baseURL string, tlsConfig *tls.Config, tokens TokenSource,
 		httpClient: newGatewayHTTPClient(tlsConfig),
 		now:        config.now,
 	}, nil
-}
-
-// Create 按指定传输模式发送 create 请求。模式只影响 Accept 和响应处理；服务端 SKU
-// 目录始终是权威，冲突时返回稳定的 406 mismatch。
-func (client *GatewayClient) Create(ctx context.Context, request GatewayCreateRequest, idempotencyKey string, mode GatewayDeliveryMode) (GatewayCreateResponse, error) {
-	return client.create(ctx, request, idempotencyKey, mode)
 }
 
 // CreateStream 发送 stream 模式 create 请求并返回 SSE 流。
@@ -305,6 +296,13 @@ func (client *GatewayClient) create(ctx context.Context, request GatewayCreateRe
 }
 
 // Get 不带幂等键获取当前 snapshot。
+//
+// ⚠ 本方法**不是**死代码，SDK-013 对账一度把它划进「从没被调用过」那一类是误判：
+// sluice 的接入彩排模块（`test/rehearsal`，独立 go module，按兄弟目录
+// `replace` 到本仓）有两处真实调用——`golden/golden_test.go` 与
+// `golden/completed_test.go`——而那个模块由 sluice 的 `ci.sh full` harness 腿编译并运行。
+// 删掉它不会让本仓任何门禁变红，只会让**另一个仓**的门禁编译失败。
+// 判据因此与那 16 条「只被测试/探针触达」的符号同类：有消费者，保留。
 func (client *GatewayClient) Get(ctx context.Context, invocationID string) (GatewayGetResponse, error) {
 	return client.GetWithETag(ctx, invocationID, "")
 }
