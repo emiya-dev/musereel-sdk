@@ -3,3 +3,6 @@ source_path: backend/service/runtime/rpc/runtime.proto
 source_commit: eb5405a25920c3424054a3c22744cf2e31236de6
 sha256: 736aff4de61bc96c81d111b90e5fd16eb231a73ac9acfb39b439928662d944b2
 frozen_at: 2026-08-18
+toolchain_protoc: v7.35.1
+toolchain_protoc_gen_go: v1.36.11
+toolchain_protoc_gen_go_grpc: v1.6.2
