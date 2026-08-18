@@ -267,6 +267,20 @@ func run(ctx context.Context, cfg config) error {
 	return runRuntime(ctx, cfg, runtimeClient, tokens, publicKey)
 }
 
+// moderationReceiptForSKU 决定本次 create 是否携带审核收据。
+//
+// moderation SKU 自己**就是**产出收据的那一次调用，携带收据在中枢是显式拒绝
+// （compliance 侧「moderation SKU 不得携带 moderation_receipt」）。而该拒绝走的内部码
+// compliance_invalid_request 不在 gateway 的冻结公共码集合里，会被折叠成
+// internal_error / HTTP 500 —— 于是 suite 只能看到「内部错误」，看不出是自己多发了一个字段。
+// 这里按 SKU 择一，不要改成「让中枢容忍」：中枢那条拒绝是对的。
+func moderationReceiptForSKU(skuID, receipt string) string {
+	if skuID == moderationGenerateSKU {
+		return ""
+	}
+	return receipt
+}
+
 // runGateway 覆盖 token exchange、create、GET、幂等、cancel、ETag
 // 和 artifact Content-Digest 路径；所有 HTTP 交互都经过 GatewayClient。
 func runGateway(ctx context.Context, cfg config, client *sdk.GatewayClient) error {
@@ -278,7 +292,7 @@ func runGateway(ctx context.Context, cfg config, client *sdk.GatewayClient) erro
 			Input:         cfg.input,
 			Parameters:    cfg.parameters,
 		},
-		ModerationReceipt: cfg.moderation,
+		ModerationReceipt: moderationReceiptForSKU(cfg.skuID, cfg.moderation),
 	}
 	createKey := conformanceKey("create")
 	first, err := createForMode(ctx, client, request, createKey, cfg.deliveryMode)
