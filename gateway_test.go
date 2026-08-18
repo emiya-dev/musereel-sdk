@@ -405,6 +405,7 @@ func TestGatewayRetryableTableAndWireMismatch(t *testing.T) {
 		GatewayComplianceRejected, GatewayInvocationNotFound, GatewayInvocationArtifactNotFound,
 		GatewayInvocationArtifactExpired, GatewayInvocationDeliveryModeMismatch,
 		GatewayInvocationIdempotencyConflict, GatewayInsufficientQuota, GatewayMemberLimitExceeded,
+		GatewayModerationInvalidRequest, GatewayInvocationTransitionConflict,
 	} {
 		if RetryableGatewayCode(code) {
 			t.Errorf("RetryableGatewayCode(%q) = true", code)

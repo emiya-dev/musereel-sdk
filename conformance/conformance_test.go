@@ -11,6 +11,7 @@ import (
 	"time"
 
 	sdk "github.com/emiya-dev/musereel-sdk"
+	runtimepb "github.com/emiya-dev/musereel-sdk/runtime"
 )
 
 // TestSluiceComposeConformance 只接受真实 compose 环境；环境不全时显式失败。
@@ -386,6 +387,135 @@ func TestGatewayTerminalSuccessAssertion(t *testing.T) {
 			}
 			if err != nil {
 				t.Fatalf("state=%q rejected: %v", testCase.state, err)
+			}
+		})
+	}
+}
+
+func TestIdentityReplayComparesBusinessFieldsAndRequiresNewRequestID(t *testing.T) {
+	first, second := identityReplayFixture()
+	if err := assertIdentityReplay(first, second, "event-019"); err != nil {
+		t.Fatalf("same business facts with distinct request_id rejected: %v", err)
+	}
+
+	tests := []struct {
+		name   string
+		mutate func(*runtimepb.IdentityReply)
+	}{
+		{name: "event_id", mutate: func(reply *runtimepb.IdentityReply) { reply.EventId = "event-other" }},
+		{name: "identity_id", mutate: func(reply *runtimepb.IdentityReply) { reply.IdentityId = "identity-other" }},
+		{name: "actor", mutate: func(reply *runtimepb.IdentityReply) { reply.Actor = "actor-other" }},
+		{name: "identity_status", mutate: func(reply *runtimepb.IdentityReply) { reply.IdentityStatus = "disabled" }},
+		{name: "verification_status", mutate: func(reply *runtimepb.IdentityReply) { reply.VerificationStatus = "verified" }},
+		{name: "state_changed_at_ms", mutate: func(reply *runtimepb.IdentityReply) { reply.StateChangedAtMs++ }},
+		{name: "verification_changed_at_ms", mutate: func(reply *runtimepb.IdentityReply) { reply.VerificationChangedAtMs = nil }},
+		{name: "event_applied", mutate: func(reply *runtimepb.IdentityReply) { reply.EventApplied = false }},
+	}
+	for _, testCase := range tests {
+		testCase := testCase
+		t.Run(testCase.name, func(t *testing.T) {
+			first, second := identityReplayFixture()
+			testCase.mutate(second)
+			if err := assertIdentityReplay(first, second, "event-019"); err == nil {
+				t.Fatalf("business field %s mismatch was accepted", testCase.name)
+			}
+		})
+	}
+
+	t.Run("same request_id is rejected", func(t *testing.T) {
+		first, second := identityReplayFixture()
+		second.RequestId = first.RequestId
+		if err := assertIdentityReplay(first, second, "event-019"); err == nil || !strings.Contains(err.Error(), "request_id") {
+			t.Fatalf("same request_id result = %v, want request_id error", err)
+		}
+	})
+}
+
+func identityReplayFixture() (*runtimepb.IdentityReply, *runtimepb.IdentityReply) {
+	firstVerificationChangedAtMs := int64(1800000000123)
+	secondVerificationChangedAtMs := int64(1800000000123)
+	return &runtimepb.IdentityReply{
+			RequestId:               "request-019-first",
+			EventId:                 "event-019",
+			IdentityId:              "identity-019",
+			Actor:                   "actor-019",
+			IdentityStatus:          "active",
+			VerificationStatus:      "pending",
+			StateChangedAtMs:        1800000000000,
+			VerificationChangedAtMs: &firstVerificationChangedAtMs,
+			EventApplied:            true,
+		}, &runtimepb.IdentityReply{
+			RequestId:               "request-019-second",
+			EventId:                 "event-019",
+			IdentityId:              "identity-019",
+			Actor:                   "actor-019",
+			IdentityStatus:          "active",
+			VerificationStatus:      "pending",
+			StateChangedAtMs:        1800000000000,
+			VerificationChangedAtMs: &secondVerificationChangedAtMs,
+			EventApplied:            true,
+		}
+}
+
+func TestCancelLegMarkerKeepsBothLegalOutcomesObservable(t *testing.T) {
+	const skuID = musicGenerateSKU
+	tests := []struct {
+		name        string
+		response    sdk.GatewayCancelResponse
+		cancelErr   error
+		wantMarker  string
+		wantFailure bool
+	}{
+		{
+			name:       "accepted",
+			response:   sdk.GatewayCancelResponse{StatusCode: 202, Accepted: true},
+			wantMarker: "CANCEL_LEG=accepted sku=" + skuID,
+		},
+		{
+			name:       "already terminal",
+			cancelErr:  &sdk.GatewayError{Code: sdk.GatewayInvocationTransitionConflict, HTTPStatus: 409},
+			wantMarker: "CANCEL_LEG=already_terminal sku=" + skuID,
+		},
+		{
+			name:        "other gateway error still fails",
+			cancelErr:   &sdk.GatewayError{Code: sdk.GatewayInternalError, HTTPStatus: 409},
+			wantFailure: true,
+		},
+		{
+			name:        "transition conflict with wrong status still fails",
+			cancelErr:   &sdk.GatewayError{Code: sdk.GatewayInvocationTransitionConflict, HTTPStatus: 500},
+			wantFailure: true,
+		},
+		{
+			name:        "unexpected success status fails",
+			response:    sdk.GatewayCancelResponse{StatusCode: 201},
+			wantFailure: true,
+		},
+		{
+			name:        "accepted response must expose accepted",
+			response:    sdk.GatewayCancelResponse{StatusCode: 202},
+			wantFailure: true,
+		},
+	}
+
+	for _, testCase := range tests {
+		testCase := testCase
+		t.Run(testCase.name, func(t *testing.T) {
+			marker, err := cancelLegMarker(skuID, testCase.response, testCase.cancelErr)
+			if testCase.wantFailure {
+				if err == nil {
+					t.Fatalf("cancel result unexpectedly accepted with marker %q", marker)
+				}
+				if marker != "" {
+					t.Fatalf("failed cancel result emitted marker %q", marker)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("cancel result rejected: %v", err)
+			}
+			if marker != testCase.wantMarker {
+				t.Fatalf("marker=%q, want %q", marker, testCase.wantMarker)
 			}
 		})
 	}
