@@ -6,3 +6,8 @@ frozen_at: 2026-08-18
 toolchain_protoc: v7.35.1
 toolchain_protoc_gen_go: v1.36.11
 toolchain_protoc_gen_go_grpc: v1.6.2
+
+frozen_codes_source_path: backend/service/gateway/frozen_public_error_codes.json
+frozen_codes_source_commit: f14f1c89066e6c0763d454de772002063eeae437
+frozen_codes_sha256: dfded4914adba9832d73fef5c93150ee2d0bb0e56b352afc28f44198fbf98550
+frozen_codes_frozen_at: 2026-08-18

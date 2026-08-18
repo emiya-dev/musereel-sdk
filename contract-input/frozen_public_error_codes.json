@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "codes": [
+    "actor_assertion_invalid",
+    "actor_assertion_replayed",
+    "compliance_rejected",
+    "insufficient_quota",
+    "internal_error",
+    "invalid_invocation_request",
+    "invocation_artifact_expired",
+    "invocation_artifact_not_found",
+    "invocation_delivery_mode_mismatch",
+    "invocation_idempotency_conflict",
+    "invocation_not_found",
+    "invocation_transition_conflict",
+    "member_limit_exceeded",
+    "moderation_invalid_request",
+    "rate_limited",
+    "runtime_forbidden",
+    "runtime_unauthenticated",
+    "sku_not_allowed",
+    "upstream_unavailable"
+  ]
+}
