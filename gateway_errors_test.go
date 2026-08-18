@@ -21,8 +21,7 @@ import (
 //     把两个同 retryable 组的常量值互换是**绿**的：标识符名没动、
 //     两个码仍在白名单里、retryable 分组也没变，而调用方拿常量比 wire 会整个对调分支。
 //   - code      —— wire 上的字面量；这一列同时与中枢导出产物做**集合**对拍。
-//   - retryable —— 中枢产物今天不导出该列（口径见 SOURCE.txt 的 frozen_codes_*），
-//     只能留在本仓；等中枢按登记加列后，这一维也可以换成产物驱动。
+//   - retryable —— 产物 schema v2 起由中枢逐码显式导出，这一列同样与产物双向对拍。
 //
 // 🔴 码名集合的事实源不是这张表，是 contract-input/frozen_public_error_codes.json
 // （中枢 gateway 导出的产物副本，sha256 由 scripts/check-contract-pin.sh 钉住）。
@@ -63,15 +62,22 @@ const frozenCodesArtifactRelativePath = "contract-input/frozen_public_error_code
 
 // frozenCodesArtifactSchemaVersion 是本仓当前读法所适用的产物版本。
 // 版本变了必须停下来看导出口径改了什么，不能默默按旧读法解析。
-const frozenCodesArtifactSchemaVersion = 1
+const frozenCodesArtifactSchemaVersion = 2
 
 type frozenCodesArtifact struct {
-	SchemaVersion int      `json:"schema_version"`
-	Codes         []string `json:"codes"`
+	SchemaVersion int             `json:"schema_version"`
+	Codes         []string        `json:"codes"`
+	Retryable     map[string]bool `json:"retryable"`
+}
+
+// frozenCodesFacts 是从产物读出来的两维事实：码集合，以及逐码的 retryable 判定。
+type frozenCodesFacts struct {
+	codes     map[string]struct{}
+	retryable map[string]bool
 }
 
 func TestGatewayInvocationErrorCodesMatchFrozenContract(t *testing.T) {
-	artifactCodes := loadFrozenCodesArtifact(t)
+	artifact := loadFrozenCodesArtifact(t)
 
 	contractNames := make(map[string]struct{}, len(frozenGatewayErrorContract))
 	contractCodes := make(map[string]struct{}, len(frozenGatewayErrorContract))
@@ -103,14 +109,18 @@ func TestGatewayInvocationErrorCodesMatchFrozenContract(t *testing.T) {
 		if got := RetryableGatewayCode(entry.code); got != entry.retryable {
 			t.Errorf("RetryableGatewayCode(%q) = %t, want %t", entry.code, got, entry.retryable)
 		}
+		// retryable 的裁定方也是中枢产物：本地这一列只是"我以为是什么"。
+		if want, ok := artifact.retryable[entry.code]; ok && want != entry.retryable {
+			t.Errorf("中枢产物判定 %q 的 retryable=%t，镜像表登记的是 %t", entry.code, want, entry.retryable)
+		}
 	}
 
 	// 集合成员以中枢产物为准，双向差集——只查一个方向的话，
 	// 「产物收缩了而本仓没跟」会是绿的。
-	if missing := gatewayErrorSetDifference(artifactCodes, contractCodes); len(missing) != 0 {
+	if missing := gatewayErrorSetDifference(artifact.codes, contractCodes); len(missing) != 0 {
 		t.Errorf("中枢产物里的公共错误码未出现在镜像表: %v；同步方式见 contract-input/SOURCE.txt 的 frozen_codes_*", missing)
 	}
-	if extra := gatewayErrorSetDifference(contractCodes, artifactCodes); len(extra) != 0 {
+	if extra := gatewayErrorSetDifference(contractCodes, artifact.codes); len(extra) != 0 {
 		t.Errorf("镜像表里的错误码不在中枢产物中: %v；本仓不得自造公共错误码", extra)
 	}
 
@@ -156,7 +166,7 @@ func TestGatewayInvocationErrorCodesMatchFrozenContract(t *testing.T) {
 
 // loadFrozenCodesArtifact 读中枢导出产物副本。产物自身可疑时一律 Fatal——
 // 一份读不出码的产物会让上面的双向差集在**空集**上恒真，那比没有这条守卫更糟。
-func loadFrozenCodesArtifact(t *testing.T) map[string]struct{} {
+func loadFrozenCodesArtifact(t *testing.T) frozenCodesFacts {
 	t.Helper()
 	_, testFile, _, ok := runtime.Caller(0)
 	if !ok {
@@ -188,7 +198,26 @@ func loadFrozenCodesArtifact(t *testing.T) map[string]struct{} {
 		}
 		codes[code] = struct{}{}
 	}
-	return codes
+
+	// 🔴 retryable 必须**全量列举**，缺一个键就 Fatal，**绝不用本地默认补全**。
+	// 中枢对未登记码的默认是 true（未知内部错按可重试处理），本仓 RetryableGatewayCode
+	// 的 default 是 false（未登记码不重试）——**两边默认正好相反**。
+	// 任何"产物没给就按本地默认填"的写法，都会让未登记码在两侧得到相反判定，
+	// 而且不会有任何一处报错。所以这里只接受显式给值。
+	if artifact.Retryable == nil {
+		t.Fatalf("产物缺 retryable 对象；schema v%d 起它是必需字段，禁止用本地默认补全", frozenCodesArtifactSchemaVersion)
+	}
+	for code := range codes {
+		if _, ok := artifact.Retryable[code]; !ok {
+			t.Fatalf("产物 retryable 缺码 %q——必须逐码显式给值，禁止默认补全（中枢默认 true / 本仓 default false，方向相反）", code)
+		}
+	}
+	for code := range artifact.Retryable {
+		if _, ok := codes[code]; !ok {
+			t.Fatalf("产物 retryable 出现不在 codes 里的码 %q", code)
+		}
+	}
+	return frozenCodesFacts{codes: codes, retryable: artifact.Retryable}
 }
 
 // gatewayErrorSwitchClauses 是 switch 的 case 分组：按该分支 `return` 的字面量归类。

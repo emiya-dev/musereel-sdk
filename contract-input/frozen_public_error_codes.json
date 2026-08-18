@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "codes": [
     "actor_assertion_invalid",
     "actor_assertion_replayed",
@@ -20,5 +20,26 @@
     "runtime_unauthenticated",
     "sku_not_allowed",
     "upstream_unavailable"
-  ]
+  ],
+  "retryable": {
+    "actor_assertion_invalid": false,
+    "actor_assertion_replayed": false,
+    "compliance_rejected": false,
+    "insufficient_quota": false,
+    "internal_error": true,
+    "invalid_invocation_request": false,
+    "invocation_artifact_expired": false,
+    "invocation_artifact_not_found": false,
+    "invocation_delivery_mode_mismatch": false,
+    "invocation_idempotency_conflict": false,
+    "invocation_not_found": false,
+    "invocation_transition_conflict": false,
+    "member_limit_exceeded": false,
+    "moderation_invalid_request": false,
+    "rate_limited": true,
+    "runtime_forbidden": false,
+    "runtime_unauthenticated": false,
+    "sku_not_allowed": false,
+    "upstream_unavailable": true
+  }
 }
