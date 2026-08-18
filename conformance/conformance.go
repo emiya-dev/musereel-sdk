@@ -762,6 +762,16 @@ func runGateway(ctx context.Context, cfg config, client *sdk.GatewayClient) erro
 	if !replay.AlreadyExists || replay.StatusCode != http.StatusSeeOther {
 		return fmt.Errorf("gateway 幂等重放未暴露 303/AlreadyExists: status=%d already_exists=%t", replay.StatusCode, replay.AlreadyExists)
 	}
+	// 安全重试必须**恢复**首次 invocation，而不是另起一笔。
+	//
+	// 303/AlreadyExists 只说明「服务端认出这是重放」，不说明它把你导回了同一笔调用——
+	// 一个返回 303 却指向新 invocation 的实现能让上面两个断言全绿，而客户已经被计了两次费。
+	// 契约 06「安全重试只能恢复已绑定的同一 invocation」在 SDK 侧的执法点就是这一行。
+	if replay.InvocationID != invocationID {
+		return fmt.Errorf(
+			"gateway 幂等重放返回了不同的 invocation: first=%s retry=%s（安全重试必须恢复首次调用）",
+			invocationID, replay.InvocationID)
+	}
 
 	artifactRefs, err := artifactRefsFromResult(cfg.skuID, invocationID, snapshot.Result)
 	if err != nil {
