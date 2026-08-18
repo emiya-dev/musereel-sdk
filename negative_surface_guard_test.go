@@ -107,6 +107,8 @@ var negativeSurfaceAllow = map[string]string{
 	"runtime/runtime.pb.go::GetBalanceClass":                                                 "冻结流水返回分类 getter",
 	"runtime/runtime.pb.go::CredentialRef":                                                   "实名证明引用，不是上游 credential 配置",
 	"runtime/runtime.pb.go::GetCredentialRef":                                                "实名证明引用 getter，不是上游 credential 配置",
+	"runtime/runtime.pb.go::QualityTier::VendorModel":                                        "冻结 protobuf 质量档位事实字段",
+	"runtime/runtime.pb.go::GetVendorModel":                                                  "冻结 protobuf 质量档位事实 getter",
 	"runtime/runtime_grpc.pb.go::RuntimeService_VerifyAndConfirmPayment_FullMethodName":      "冻结 protobuf RPC 路径常量",
 	"runtime/runtime_grpc.pb.go::RuntimeService_GetBalance_FullMethodName":                   "冻结只读 protobuf RPC 路径常量",
 	"runtime/runtime_grpc.pb.go::RuntimeService_VerifyAndConfirmPayment":                     "冻结 protobuf RPC 方法，仅由 SDK 透传",
