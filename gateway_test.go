@@ -394,21 +394,12 @@ func TestGatewaySSEOrderAndForwardCompatibleFields(t *testing.T) {
 }
 
 func TestGatewayRetryableTableAndWireMismatch(t *testing.T) {
-	for _, code := range []string{GatewayRateLimited, GatewayUpstreamUnavailable, GatewayInternalError} {
-		if !RetryableGatewayCode(code) {
-			t.Errorf("RetryableGatewayCode(%q) = false", code)
-		}
-	}
-	for _, code := range []string{
-		GatewayInvalidInvocationRequest, GatewayRuntimeUnauthenticated, GatewayActorAssertionInvalid,
-		GatewayActorAssertionReplayed, GatewayRuntimeForbidden, GatewaySKUNotAllowed,
-		GatewayComplianceRejected, GatewayInvocationNotFound, GatewayInvocationArtifactNotFound,
-		GatewayInvocationArtifactExpired, GatewayInvocationDeliveryModeMismatch,
-		GatewayInvocationIdempotencyConflict, GatewayInsufficientQuota, GatewayMemberLimitExceeded,
-		GatewayModerationInvalidRequest, GatewayInvocationTransitionConflict,
-	} {
-		if RetryableGatewayCode(code) {
-			t.Errorf("RetryableGatewayCode(%q) = true", code)
+	// ⚠ 这里刻意**不**再手抄一遍 19 个码：那样它就是同一集合在本包里的第四份副本，
+	// 而它是「包含式」断言（漏抄一个码只会少测一条，不会红）。集合成员统一由
+	// frozenGatewayErrorContract 提供，那张表自身与中枢导出产物双向对拍。
+	for _, entry := range frozenGatewayErrorContract {
+		if got := RetryableGatewayCode(entry.code); got != entry.retryable {
+			t.Errorf("RetryableGatewayCode(%q) = %t, want %t", entry.code, got, entry.retryable)
 		}
 	}
 	body := []byte(`{"request_id":"req-err","error":{"code":"rate_limited","message":"diagnostic","retryable":false,"retry_after_ms":1200,"details":{"invocation_id":"inv-01"}}}`)
