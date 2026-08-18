@@ -556,3 +556,331 @@ func TestModerationSKUCarriesNoModerationReceipt(t *testing.T) {
 		})
 	}
 }
+
+func TestBuildModerationRequestUsesSerializedTargetSpec(t *testing.T) {
+	const taskRef = "task-receipt-017"
+	targetSpecBytes := []byte(`{"schema_version":"3","input":{"prompt":"same target"},"parameters":{"seconds":"4"}}`)
+	request, err := buildModerationRequest(config{skuID: videoGenerateSKU, taskRef: taskRef}, targetSpecBytes)
+	if err != nil {
+		t.Fatalf("build moderation request failed: %v", err)
+	}
+	if request.SKU != moderationGenerateSKU {
+		t.Fatalf("moderation request sku=%q, want %q", request.SKU, moderationGenerateSKU)
+	}
+	if request.TaskRef != taskRef {
+		t.Fatalf("moderation request task_ref=%q, want %q", request.TaskRef, taskRef)
+	}
+	if request.Spec.SchemaVersion != conformanceSchemaVersionOne {
+		t.Fatalf("moderation request schema_version=%q, want %q", request.Spec.SchemaVersion, conformanceSchemaVersionOne)
+	}
+	if request.ModerationReceipt != "" {
+		t.Fatalf("moderation request carried receipt %q", request.ModerationReceipt)
+	}
+
+	input, ok := request.Spec.Input.(json.RawMessage)
+	if !ok {
+		t.Fatalf("moderation request input type=%T, want json.RawMessage", request.Spec.Input)
+	}
+	var moderationInput struct {
+		TargetSKUID string          `json:"target_sku_id"`
+		TargetSpec  json.RawMessage `json:"target_spec"`
+	}
+	if err := json.Unmarshal(input, &moderationInput); err != nil {
+		t.Fatalf("decode moderation input failed: %v", err)
+	}
+	if moderationInput.TargetSKUID != videoGenerateSKU {
+		t.Fatalf("target_sku_id=%q, want %q", moderationInput.TargetSKUID, videoGenerateSKU)
+	}
+	if string(moderationInput.TargetSpec) != string(targetSpecBytes) {
+		t.Fatalf("target_spec=%s, want exact serialized bytes %s", moderationInput.TargetSpec, targetSpecBytes)
+	}
+}
+
+func TestModerationReceiptResultFailureReasons(t *testing.T) {
+	tests := []struct {
+		name       string
+		result     moderationInvocationResult
+		wantToken  string
+		wantReason string
+	}{
+		{
+			name:       "reject verdict",
+			result:     moderationInvocationResult{Kind: "moderation", Verdict: "reject", ModerationReceipt: "ignored"},
+			wantReason: "reason=moderation_verdict_not_pass",
+		},
+		{
+			name:       "pass without token",
+			result:     moderationInvocationResult{Kind: "moderation", Verdict: "pass"},
+			wantReason: "reason=moderation_pass_receipt_empty",
+		},
+		{
+			name:      "pass with token",
+			result:    moderationInvocationResult{Kind: "moderation", Verdict: "pass", ModerationReceipt: "receipt-main"},
+			wantToken: "receipt-main",
+		},
+	}
+
+	for _, testCase := range tests {
+		testCase := testCase
+		t.Run(testCase.name, func(t *testing.T) {
+			got, err := receiptFromModerationResult(videoGenerateSKU, testCase.result)
+			if testCase.wantReason != "" {
+				if err == nil {
+					t.Fatalf("result unexpectedly accepted with token %q", got)
+				}
+				if !strings.Contains(err.Error(), "RECEIPT_CHAIN=mint_failed sku="+videoGenerateSKU) || !strings.Contains(err.Error(), testCase.wantReason) {
+					t.Fatalf("error=%q, want sku and reason %q", err, testCase.wantReason)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("pass result rejected: %v", err)
+			}
+			if got != testCase.wantToken {
+				t.Fatalf("token=%q, want %q", got, testCase.wantToken)
+			}
+		})
+	}
+}
+
+func TestReceiptMintFailureClassification(t *testing.T) {
+	blocked := receiptMintInvocationFailure(imageGenerateSKU, &sdk.GatewayError{Code: sdk.GatewayInvalidInvocationRequest})
+	if blocked == nil || !strings.Contains(blocked.Error(), "RECEIPT_CHAIN=blocked sku="+imageGenerateSKU+" reason=hub_target_shape_unsupported") {
+		t.Fatalf("blocked error=%v, want hub target shape marker", blocked)
+	}
+	if !strings.Contains(blocked.Error(), "中枢当前只能审核 text 形与 video 形目标") {
+		t.Fatalf("blocked error=%q lacks human explanation", blocked)
+	}
+
+	invocationFailure := receiptMintInvocationFailure(videoGenerateSKU, fmt.Errorf("transport down"))
+	if invocationFailure == nil || !strings.Contains(invocationFailure.Error(), "reason=moderation_invocation_failed") {
+		t.Fatalf("invocation failure=%v, want moderation invocation reason", invocationFailure)
+	}
+	if strings.Contains(invocationFailure.Error(), "hub_target_shape_unsupported") {
+		t.Fatalf("generic invocation failure was classified as shape unsupported: %q", invocationFailure)
+	}
+}
+
+func TestReceiptChainMarkersEnforceSKUClassification(t *testing.T) {
+	const taskRef = "task-receipt-017"
+	tests := []struct {
+		name       string
+		marker     string
+		wantMarker string
+		wantErr    string
+	}{
+		{
+			name:       "moderation skipped",
+			marker:     "skipped",
+			wantMarker: "RECEIPT_CHAIN=skipped sku=" + moderationGenerateSKU,
+		},
+		{
+			name:       "main minted",
+			marker:     "minted-main",
+			wantMarker: "RECEIPT_CHAIN=minted sku=" + videoGenerateSKU + " leg=main task_ref=" + taskRef,
+		},
+		{
+			name:       "cancel minted",
+			marker:     "minted-cancel",
+			wantMarker: "RECEIPT_CHAIN=minted sku=" + videoGenerateSKU + " leg=cancel task_ref=" + taskRef,
+		},
+		{
+			name:       "main presented",
+			marker:     "presented-main",
+			wantMarker: "RECEIPT_CHAIN=presented sku=" + videoGenerateSKU + " leg=main",
+		},
+		{
+			name:       "cancel presented",
+			marker:     "presented-cancel",
+			wantMarker: "RECEIPT_CHAIN=presented sku=" + videoGenerateSKU + " leg=cancel",
+		},
+		{
+			name:    "non moderation cannot be skipped",
+			marker:  "bad-skip",
+			wantErr: "不得打 skipped",
+		},
+		{
+			name:    "moderation cannot be minted",
+			marker:  "bad-mint",
+			wantErr: "不得铸造收据",
+		},
+		{
+			name:    "non moderation cannot mint empty receipt",
+			marker:  "empty-mint",
+			wantErr: "没有已铸造收据",
+		},
+		{
+			name:    "moderation cannot skip while carrying receipt",
+			marker:  "skip-with-receipt",
+			wantErr: "不得携带收据",
+		},
+		{
+			name:    "moderation cannot be presented",
+			marker:  "bad-present",
+			wantErr: "不得打 presented",
+		},
+		{
+			name:    "non moderation cannot present empty receipt",
+			marker:  "empty-present",
+			wantErr: "没有可呈递收据",
+		},
+		{
+			name:    "minted rejects unknown leg",
+			marker:  "minted-bad-leg",
+			wantErr: "收据腿无效",
+		},
+		{
+			name:    "presented rejects unknown leg",
+			marker:  "presented-bad-leg",
+			wantErr: "收据腿无效",
+		},
+	}
+
+	for _, testCase := range tests {
+		testCase := testCase
+		t.Run(testCase.name, func(t *testing.T) {
+			var marker string
+			var err error
+			switch testCase.marker {
+			case "skipped":
+				marker, err = receiptChainSkippedMarker(moderationGenerateSKU, "")
+			case "minted-main":
+				marker, err = receiptChainMintedMarker(videoGenerateSKU, receiptLegMain, taskRef, "receipt-main")
+			case "minted-cancel":
+				marker, err = receiptChainMintedMarker(videoGenerateSKU, receiptLegCancel, taskRef, "receipt-cancel")
+			case "presented-main":
+				marker, err = receiptChainPresentedMarker(videoGenerateSKU, receiptLegMain, "receipt-main")
+			case "presented-cancel":
+				marker, err = receiptChainPresentedMarker(videoGenerateSKU, receiptLegCancel, "receipt-cancel")
+			case "bad-skip":
+				marker, err = receiptChainSkippedMarker(videoGenerateSKU, "")
+			case "bad-mint":
+				marker, err = receiptChainMintedMarker(moderationGenerateSKU, receiptLegMain, taskRef, "receipt")
+			case "empty-mint":
+				marker, err = receiptChainMintedMarker(videoGenerateSKU, receiptLegMain, taskRef, "")
+			case "skip-with-receipt":
+				marker, err = receiptChainSkippedMarker(moderationGenerateSKU, "receipt")
+			case "bad-present":
+				marker, err = receiptChainPresentedMarker(moderationGenerateSKU, receiptLegMain, "receipt")
+			case "empty-present":
+				marker, err = receiptChainPresentedMarker(videoGenerateSKU, receiptLegMain, "")
+			case "minted-bad-leg":
+				marker, err = receiptChainMintedMarker(videoGenerateSKU, "bogus", taskRef, "receipt")
+			case "presented-bad-leg":
+				marker, err = receiptChainPresentedMarker(videoGenerateSKU, "bogus", "receipt")
+			default:
+				t.Fatalf("unknown marker fixture %q", testCase.marker)
+			}
+			if testCase.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), testCase.wantErr) {
+					t.Fatalf("marker=%q error=%v, want error containing %q", marker, err, testCase.wantErr)
+				}
+				if marker != "" {
+					t.Fatalf("failed marker returned %q", marker)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("marker rejected: %v", err)
+			}
+			if marker != testCase.wantMarker {
+				t.Fatalf("marker=%q, want %q", marker, testCase.wantMarker)
+			}
+		})
+	}
+}
+
+func TestTargetCreateFailurePreservesModerationDetailsOnlyForReceiptErrors(t *testing.T) {
+	details := map[string]any{
+		"fields": []any{"messages"},
+		"reason": "receipt consumed",
+	}
+	receiptFailure := targetCreateFailure(imageGenerateSKU, "target create", &sdk.GatewayError{
+		Code:    sdk.GatewayModerationInvalidRequest,
+		Details: details,
+	})
+	encodedDetails, err := json.Marshal(details)
+	if err != nil {
+		t.Fatalf("marshal details fixture failed: %v", err)
+	}
+	if !strings.Contains(receiptFailure.Error(), "收据链被中枢拒绝") || !strings.Contains(receiptFailure.Error(), "details="+string(encodedDetails)) {
+		t.Fatalf("receipt failure=%q, want receipt classification and details %s", receiptFailure, encodedDetails)
+	}
+
+	targetFailure := targetCreateFailure(imageGenerateSKU, "target create", &sdk.GatewayError{Code: sdk.GatewayInvalidInvocationRequest})
+	if strings.Contains(strings.ToLower(targetFailure.Error()), "receipt") || strings.Contains(targetFailure.Error(), "收据") {
+		t.Fatalf("non-receipt target failure mentions receipt: %q", targetFailure)
+	}
+}
+
+func TestReceiptReplayResultMarkerAcceptsBothObservedOutcomes(t *testing.T) {
+	accepted, err := receiptReplayResultMarker(videoGenerateSKU, sdk.GatewayCreateResponse{StatusCode: 202}, nil)
+	if err != nil || accepted != "RECEIPT_CHAIN=replay_accepted sku="+videoGenerateSKU {
+		t.Fatalf("accepted marker=%q err=%v", accepted, err)
+	}
+
+	for _, code := range []string{sdk.GatewayModerationInvalidRequest, sdk.GatewayComplianceRejected} {
+		code := code
+		t.Run(code, func(t *testing.T) {
+			rejected, rejectErr := receiptReplayResultMarker(videoGenerateSKU, sdk.GatewayCreateResponse{}, &sdk.GatewayError{Code: code})
+			if rejectErr != nil || rejected != "RECEIPT_CHAIN=replay_rejected sku="+videoGenerateSKU {
+				t.Fatalf("rejected marker=%q err=%v for code=%s", rejected, rejectErr, code)
+			}
+		})
+	}
+
+	if _, err := receiptReplayResultMarker(videoGenerateSKU, sdk.GatewayCreateResponse{}, fmt.Errorf("unrelated failure")); err == nil {
+		t.Fatal("unrelated replay probe error was accepted")
+	}
+	if _, err := receiptReplayResultMarker(videoGenerateSKU, sdk.GatewayCreateResponse{StatusCode: 303, AlreadyExists: true}, nil); err == nil {
+		t.Fatal("unexpected idempotent response was accepted as replay probe outcome")
+	}
+}
+
+// 铸造前置的两道校验各自独立：目标 bytes 不合法就不该发出 moderation 请求，
+// 而终态 result 不是 moderation 形状时不能被当成「没拿到收据」——那会把中枢换了
+// 结果形状这件事误报成收据链失败，归因规则第 1 条就此失效。
+func TestBuildModerationRequestRejectsUnusableTargetSpec(t *testing.T) {
+	for _, testCase := range []struct {
+		name       string
+		targetSpec []byte
+	}{
+		{name: "empty", targetSpec: nil},
+		{name: "blank", targetSpec: []byte("   ")},
+		{name: "not json", targetSpec: []byte(`{"schema_version":`)},
+	} {
+		testCase := testCase
+		t.Run(testCase.name, func(t *testing.T) {
+			if _, err := buildModerationRequest(config{skuID: videoGenerateSKU, taskRef: "task"}, testCase.targetSpec); err == nil {
+				t.Fatal("unusable target spec bytes were accepted")
+			}
+		})
+	}
+}
+
+func TestParseModerationInvocationResultRejectsForeignShapes(t *testing.T) {
+	for _, testCase := range []struct {
+		name   string
+		result json.RawMessage
+	}{
+		{name: "empty", result: nil},
+		{name: "blank", result: json.RawMessage("  ")},
+		{name: "not json", result: json.RawMessage(`{"kind":`)},
+		{name: "wrong kind", result: json.RawMessage(`{"kind":"image","verdict":"pass","moderation_receipt":"r"}`)},
+	} {
+		testCase := testCase
+		t.Run(testCase.name, func(t *testing.T) {
+			if _, err := parseModerationInvocationResult(testCase.result); err == nil {
+				t.Fatal("foreign moderation result shape was accepted")
+			}
+		})
+	}
+
+	parsed, err := parseModerationInvocationResult(json.RawMessage(`{"kind":"moderation","verdict":"pass","moderation_receipt":"r","receipt_expires_at_ms":1}`))
+	if err != nil {
+		t.Fatalf("valid moderation result rejected: %v", err)
+	}
+	if parsed.ModerationReceipt != "r" {
+		t.Fatalf("moderation_receipt=%q, want %q", parsed.ModerationReceipt, "r")
+	}
+}
