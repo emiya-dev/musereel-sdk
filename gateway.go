@@ -736,17 +736,51 @@ func validateGatewayInput(raw []byte) error {
 // 遍历的职责因此收缩成一件事：**在 jcs 说"不行"之后，把它定位到具体字段**。
 // jcs 的原始报错（"json number must be integer decimal string form"）不带任何字段名，
 // 而中枢那边同一条错误会被 create.go 改写成 fields=["request"]，更没有定位价值。
+// ⚠ 已知代价：`CanonicalizeJSON` 会**完整重解析并重建** canonical 串，而 Validate 对
+// input 与 parameters 各跑一次，加上签名路径对整包再跑一次，一次 create 共三次全量 JCS。
+// 二次审查两路都点了这条，grok 路实测：8MiB 的 input 单次 canonicalize 约 81ms，
+// 线性外推到中枢允许的 64MB body 约 0.6s + 一棵额外的树 + 一份等长的串。
+//
+// 本轮**接受**这个代价：相对一次 video 生成的时长可忽略，而换到的是「过不了规范化的
+// 请求在本地就被按字段拦下」。⇒ 如果将来大 body 真成为问题，正确的修法是**给 jcs 包加
+// 一个只校验不重建的入口**，让这里改调它；不要在这里按 body 大小切换判据——那会让
+// 「这一关查不查重复键」变成 body 大小的函数，是一个新的隐含前提。
 func validateGatewayCanonicalizable(raw []byte, value any, path string) error {
 	_, canonicalErr := jcs.CanonicalizeJSON(raw)
 	if canonicalErr == nil {
 		return nil
 	}
-	if located := locateUncanonicalizableNumber(value, path); located != nil {
-		return located
+	// 🔴 只有当 jcs 拒的**确实是数字**时才去定位字段。
+	//
+	// 否则会报错错位：`{"a":2,"a":1.5}` 的真实拒因是重复键（jcs 在解码第二个 value
+	// 之前就拒了），但 decodeGatewayJSONValue 走 encoding/json 是末键覆盖，树里只剩
+	// `a: 1.5`，于是定位器兴高采烈地报「a 是小数」——接入方改完小数，重复键还在，
+	// 再失败一次。二次审查（composer 路第二轮）实测到这条。
+	//
+	// 判错误类型用字符串匹配不优雅，但这是**中枢自己的做法**
+	// （sluice 侧 gateway/fingerprint.go:699 与 invocation/spec.go:170 都是
+	// `strings.Contains(err.Error(), "json number must be integer decimal string form")`），
+	// 跟着同一份 jcs 实现走比自己另发明一套判别更不容易漂。
+	if isJCSNumberRejection(canonicalErr) {
+		if located := locateUncanonicalizableNumber(value, path); located != nil {
+			return located
+		}
 	}
-	// 定位不到具体字段（重复键、坏 UTF-8、未配对代理项等）：透传 jcs 的原因，
-	// 至少说清是 input 还是 parameters 那一段。
+	// 拒因不是数字（重复键、坏 UTF-8、未配对代理项），或是数字但已被末键覆盖而定位不到：
+	// 透传 jcs 的原因，至少说清是 input 还是 parameters 那一段。
 	return fmt.Errorf("%s cannot be canonicalized by the gateway: %w", path, canonicalErr)
+}
+
+// isJCSNumberRejection 判断 jcs 的拒因是不是「这个 JSON 数字不合规范」。
+// 两条串对应 jcs/jcs.go 对 json.Number 的两条限制；那个包是中枢冻结参考实现的镜像，
+// 串一变这里就要跟着变——TestGatewayNumberRejectionStringsStillMatchJCS 钉住这一点。
+func isJCSNumberRejection(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := err.Error()
+	return strings.Contains(message, "json number must be integer decimal string form") ||
+		strings.Contains(message, "json integer out of int64 range")
 }
 
 func decodeGatewayJSONValue(raw []byte, path string) (any, error) {

@@ -710,6 +710,69 @@ func TestGatewayAdviceNeverEchoesTheRejectedToken(t *testing.T) {
 	}
 }
 
+// TestGatewayNonNumberRejectionIsNotBlamedOnANumber 钉住「不许把别人的锅扣给数字」。
+//
+// `{"a":2,"a":1.5}` 的真实拒因是**重复键**（jcs 在解码第二个 value 之前就拒了）。
+// 而 decodeGatewayJSONValue 走 encoding/json 是末键覆盖，树里只剩 a:1.5——
+// 定位器若无条件运行，就会报「a 是小数」，接入方改完小数重复键还在，再失败一次。
+// 二次审查（composer 路第二轮）实测到，处置是只在 jcs 确实因数字而拒时才定位。
+func TestGatewayNonNumberRejectionIsNotBlamedOnANumber(t *testing.T) {
+	// ⚠ 拒因取决于 **jcs token 流的顺序**，不是"这段 JSON 里有什么"：
+	// `{"a":2,"a":1.5}` 读到第二个键就发现重复，小数还没被解析 ⇒ 拒因是重复键；
+	// `{"a":1.5,"a":2}` 小数先被读到 ⇒ 拒因是数字。两者预期不同，别写成同一条。
+	// 初版把后者也预期成重复键，红的是测试不是实现。
+	cases := []struct {
+		name       string
+		parameters string
+		wantReason string
+	}{
+		{"重复键先于小数被读到", `{"a":2,"a":1.5}`, "duplicate key"},
+		{"嵌套重复键", `{"outer":{"a":2,"a":1.5}}`, "duplicate key"},
+		{"小数先于重复键被读到", `{"a":1.5,"a":2}`, "json number must be integer decimal string form"},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			err := speechRequestWithParameters(testCase.parameters).Validate()
+			if err == nil {
+				t.Fatalf("必须被拒：%s", testCase.parameters)
+			}
+			if !strings.Contains(err.Error(), testCase.wantReason) {
+				t.Fatalf("必须报 jcs 的真实拒因 %q：%v", testCase.wantReason, err)
+			}
+			// 关键断言：不得把非数字拒因说成「这个小数不能规范化」。
+			// 末键覆盖会让树里只剩合法值或只剩非法值，定位器无条件运行就会张冠李戴。
+			if testCase.wantReason == "duplicate key" &&
+				strings.Contains(err.Error(), "cannot canonicalize: request fingerprints") {
+				t.Fatalf("不得把重复键报成小数问题——改完小数还会再失败一次：%v", err)
+			}
+		})
+	}
+}
+
+// TestGatewayNumberRejectionStringsStillMatchJCS 钉住 isJCSNumberRejection 认的两条串。
+//
+// 它靠字符串匹配识别 jcs 的数字拒因（中枢也是这么做的）。串一变，
+// 「拒因是数字」就会被判成 false，于是所有小数错误退化成没有字段路径的兜底报错——
+// 请求照样被拒，报错质量却悄悄掉一档。这条测试让那种退化当场可见。
+func TestGatewayNumberRejectionStringsStillMatchJCS(t *testing.T) {
+	if _, err := jcs.CanonicalizeJSON([]byte(`{"a":1.5}`)); err == nil {
+		t.Fatal("jcs 必须拒小数")
+	} else if !isJCSNumberRejection(err) {
+		t.Fatalf("小数拒因没被识别成数字类，字符串对不上了：%v", err)
+	}
+	if _, err := jcs.CanonicalizeJSON([]byte(`{"a":99999999999999999999}`)); err == nil {
+		t.Fatal("jcs 必须拒超出 int64 的整数")
+	} else if !isJCSNumberRejection(err) {
+		t.Fatalf("int64 越界拒因没被识别成数字类，字符串对不上了：%v", err)
+	}
+	// 负对照：非数字拒因不得被认成数字类，否则第一条守卫失去意义。
+	if _, err := jcs.CanonicalizeJSON([]byte(`{"a":1,"a":2}`)); err == nil {
+		t.Fatal("jcs 必须拒重复键")
+	} else if isJCSNumberRejection(err) {
+		t.Fatalf("重复键被误认成数字拒因：%v", err)
+	}
+}
+
 // TestGatewayNumberErrorIsDeterministic 钉住报错的确定性。
 //
 // Go 的 map 迭代顺序是随机的。含两个坏字段的请求如果不排序遍历，报哪一个每次都可能不同——
