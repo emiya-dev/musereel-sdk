@@ -12,6 +12,7 @@ import (
 	"mime"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -54,8 +55,8 @@ type GatewayIdentity struct {
 }
 
 // GatewayInvocationSpec 是冻结的 spec 对象。Input 和 Parameters 使用 interface，
-// 调用方可传 json.RawMessage 或普通 Go JSON 值；Validate 只会拒绝已知
-// decimal_string 参数字段中的 JSON 数值。
+// 调用方可传 json.RawMessage 或普通 Go JSON 值；Validate 拒绝其中**无法被规范化**
+// 的 JSON 数值（小数、指数、超出 int64），整数一律放行。
 type GatewayInvocationSpec struct {
 	SchemaVersion string `json:"schema_version"`
 	Input         any    `json:"input"`
@@ -86,6 +87,12 @@ func (request GatewayCreateRequest) Validate() error {
 	parameters, err := json.Marshal(request.Spec.Parameters)
 	if err != nil || gatewayJSONNull(parameters) {
 		return fmt.Errorf("create request requires a non-null spec.parameters")
+	}
+	// input 与 parameters 走同一关：assertion digest 规范化的是**整个请求体**
+	// （assertion.go 的 jcs.CanonicalizeJSON(body)），只查 parameters 会让 input
+	// 里的同类数值躲到 digest 那一步才炸，而那一步的报错不带字段路径。
+	if err := validateGatewayInput(input); err != nil {
+		return err
 	}
 	if err := validateGatewayParameters(parameters); err != nil {
 		return err
@@ -699,97 +706,100 @@ func validateGatewayIdempotencyKey(key string) error {
 }
 
 func validateGatewayParameters(raw []byte) error {
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.UseNumber()
-	var value any
-	if err := decoder.Decode(&value); err != nil {
-		return fmt.Errorf("spec.parameters is not valid JSON")
-	}
-	if decoder.Decode(&struct{}{}) != io.EOF {
-		return fmt.Errorf("spec.parameters contains trailing JSON")
+	value, err := decodeGatewayJSONValue(raw, "spec.parameters")
+	if err != nil {
+		return err
 	}
 	if _, ok := value.(map[string]any); !ok {
 		return fmt.Errorf("spec.parameters must be a JSON object")
 	}
-	if gatewayJSONContainsNumber(value) {
-		fieldPath := gatewayJSONDecimalStringNumberPath(value)
-		return fmt.Errorf("%s must be a decimal string (JSON string), got a JSON number", fieldPath)
+	return validateGatewayCanonicalizableNumbers(value, "spec.parameters")
+}
+
+func validateGatewayInput(raw []byte) error {
+	value, err := decodeGatewayJSONValue(raw, "spec.input")
+	if err != nil {
+		return err
 	}
-	return nil
+	return validateGatewayCanonicalizableNumbers(value, "spec.input")
 }
 
-// gatewayJSONContainsNumber reports whether a JSON number occurs in a field
-// whose public request schema declares decimal_string. It deliberately does
-// not mean "there is any number anywhere in parameters": speech's pitch,
-// speed, and vol are number/integer fields, and response_format contains an
-// opaque JSON Schema document whose constraints are naturally numeric.
-func gatewayJSONContainsNumber(value any) bool {
-	return gatewayJSONDecimalStringNumberPath(value) != ""
+func decodeGatewayJSONValue(raw []byte, path string) (any, error) {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	var value any
+	if err := decoder.Decode(&value); err != nil {
+		return nil, fmt.Errorf("%s is not valid JSON", path)
+	}
+	if decoder.Decode(&struct{}{}) != io.EOF {
+		return nil, fmt.Errorf("%s contains trailing JSON", path)
+	}
+	return value, nil
 }
 
-// gatewayJSONDecimalStringNumberPath returns the first offending parameter
-// path, or the empty string when all numbers are in fields that the SDK must
-// pass through. The current public request schema identifies image_count as a
-// top-level decimal_string field; keep this list narrow because this SDK does
-// not own or interpret the full per-SKU request schema. If the gateway adds a
-// number-typed parameter, no SDK change is needed. If it adds another
-// decimal_string parameter, add that schema-declared field here in the same
-// contract update. response_format is opaque by contract and is never walked.
-func gatewayJSONDecimalStringNumberPath(value any) string {
-	return gatewayJSONDecimalStringNumberPathAt(value, "spec.parameters", false)
-}
-
-// gatewayDecimalStringParameters is the full set of top-level spec.parameters
-// fields that the gateway's public request schema declares as decimal_string.
+// validateGatewayCanonicalizableNumbers 拒绝**无法通过请求规范化**的 JSON 数字，
+// 并在报错里带上字段路径。
 //
-// It was enumerated field-by-field from the gateway's own frozen request-schema
-// goldens (2026-08-19), not guessed from field names:
+// 为什么这一关判「能不能规范化」而不是「这个字段是不是 decimal_string」：
+// 后者需要 SDK 里维护一份逐 SKU 请求 schema 的手抄本，而中枢那份是**按运营配置
+// 动态派生**的（querysurface/public_schema.go 里 publicParameterRule 会把任何配了
+// min/max 的 param_schema 字段渲染成 decimal_string），既抄不全也追不上：
+// 运营在 console 加一个参数，SDK 就静默漏掉一个字段。实测漏网的至少有 text 的
+// temperature（顶层）与 music 的 audio_setting.sample_rate / bitrate（嵌套两层，
+// 只认顶层的白名单结构上就够不到）。
 //
-//	image_v1     -> parameters.image_count
-//	video_v3, v4 -> parameters.seconds
+// 「能不能规范化」这个判据则与 jcs 子集**同源**——见 jcs/jcs.go 对 json.Number 的
+// 两条限制，那个包是中枢冻结参考实现（contract-input/reference/jcs-server-reference.go.txt）
+// 的镜像，跟着它走就没有跨仓漂移。中枢对同一条错误自己也是这么判的
+// （backend/pkg/app/core/jcs.go 拒小数，gateway 侧把它翻译成
+// 「schema 中的 JSON 数字不能使用小数或指数，请改用整数十进制」）。
 //
-// Everything not in this set is passed through: speech's pitch/speed/vol are
-// declared integer/number, and response_format carries an opaque JSON Schema
-// document whose constraint keywords are naturally numeric.
-//
-// ⚠ Keep this set in sync with the gateway goldens. Adding a number-typed
-// parameter upstream needs no change here; adding another decimal_string
-// parameter does, and missing it means this SDK silently stops rejecting a
-// field the gateway will reject later with a less actionable message.
-var gatewayDecimalStringParameters = map[string]bool{
-	"image_count": true,
-	"seconds":     true,
-}
-
-func gatewayJSONDecimalStringNumberPathAt(value any, path string, decimalStringField bool) string {
+// ⚠ 这一关**不冒充 schema 校验**：整数形态的 JSON 数字一律放行，哪怕该字段声明为
+// decimal_string（例：image_count: 4）。那种错由中枢拒——它知道 const / min / max /
+// enum，报错比 SDK 猜的准。SDK 只负责拦住「连规范化都过不去、否则要到算 digest
+// 时才炸且不带路径」的那一类。
+func validateGatewayCanonicalizableNumbers(value any, path string) error {
 	switch current := value.(type) {
 	case json.Number:
-		if decimalStringField {
-			return path
+		text := current.String()
+		if strings.ContainsAny(text, ".eE") {
+			// ⚠ 不要在这里笼统建议「改传字符串」：该字段接不接受 JSON 字符串取决于它在
+			// 目录里的声明。decimal_string 字段要字符串（text 的 temperature 就是这么发的），
+			// 而声明为 number / integer 的字段拿到字符串会被中枢的手写校验当场拒
+			// （首字节不是数字或负号即拒）。所以这里只陈述事实并指路到目录。
+			return fmt.Errorf(
+				"%s is the JSON number %s, which the gateway cannot canonicalize: request fingerprints use an "+
+					"integer-only JCS subset. Check this SKU's request schema: decimal_string fields take a JSON "+
+					"string (%q); integer/number fields take an integer",
+				path, text, text)
+		}
+		if _, err := strconv.ParseInt(text, 10, 64); err != nil {
+			return fmt.Errorf(
+				"%s is the JSON number %s, which is outside the int64 range the gateway can canonicalize",
+				path, text)
 		}
 	case []any:
 		for index, item := range current {
-			itemPath := fmt.Sprintf("%s[%d]", path, index)
-			if fieldPath := gatewayJSONDecimalStringNumberPathAt(item, itemPath, decimalStringField); fieldPath != "" {
-				return fieldPath
+			if err := validateGatewayCanonicalizableNumbers(item, fmt.Sprintf("%s[%d]", path, index)); err != nil {
+				return err
 			}
 		}
 	case map[string]any:
-		for key, item := range current {
-			// response_format.json_schema.schema is an opaque document. Its
-			// numeric JSON Schema keywords are not gateway ledger quantities.
-			if key == "response_format" {
-				continue
-			}
-			itemPath := path + "." + key
-			itemIsDecimalString := decimalStringField ||
-				(path == "spec.parameters" && gatewayDecimalStringParameters[key])
-			if fieldPath := gatewayJSONDecimalStringNumberPathAt(item, itemPath, itemIsDecimalString); fieldPath != "" {
-				return fieldPath
+		// 按键排序遍历：同一个坏请求必须每次都报同一个字段。Go 的 map 迭代顺序是
+		// 随机的，不排序的话「含两个坏字段的请求报哪一个」每次都可能不同——
+		// 对接方会看到飘忽的报错，测试也会间歇性红。
+		keys := make([]string, 0, len(current))
+		for key := range current {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			if err := validateGatewayCanonicalizableNumbers(current[key], path+"."+key); err != nil {
+				return err
 			}
 		}
 	}
-	return ""
+	return nil
 }
 
 func gatewayJSONNull(raw []byte) bool { return bytes.Equal(bytes.TrimSpace(raw), []byte("null")) }

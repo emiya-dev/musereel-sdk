@@ -16,6 +16,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/emiya-dev/musereel-sdk/jcs"
 )
 
 type gatewayTestTokenSource struct {
@@ -412,90 +414,207 @@ func TestGatewayRetryableTableAndWireMismatch(t *testing.T) {
 	}
 }
 
-func TestGatewayCreateAllowsSpeechNumericParameters(t *testing.T) {
+// speechDecimalRequest 造一个 speech 请求，parameters 由调用方给。
+func speechRequestWithParameters(raw string) GatewayCreateRequest {
 	request := validGatewayCreateRequest()
 	request.SKU = "speech.generate.v1"
 	request.TaskRef = "speech-task-01"
 	request.Spec.Input = map[string]any{"text": "hello"}
-	request.Spec.Parameters = json.RawMessage(`{"voice_id":"x","pitch":0,"speed":1.2,"vol":1.5}`)
+	request.Spec.Parameters = json.RawMessage(raw)
+	return request
+}
 
-	body, err := json.Marshal(request)
-	if err != nil {
-		t.Fatalf("marshal speech request: %v", err)
-	}
-	t.Logf("speech request body=%s", body)
+// TestGatewayCreateAllowsIntegerNumericParameters 钉住「整数一律放行」。
+//
+// 中枢把 speech 的 pitch 声明为 integer、speed 与 vol 声明为 number
+// （querysurface/public_schema.go），它们本来就该以 JSON 数字发送——早先那版
+// 「拒绝 parameters 内任何 JSON 数字」把它们一起误杀了。
+func TestGatewayCreateAllowsIntegerNumericParameters(t *testing.T) {
+	request := speechRequestWithParameters(`{"voice_id":"x","pitch":0,"speed":1,"vol":2}`)
 	if err := request.Validate(); err != nil {
-		t.Fatalf("speech numeric parameters were rejected: %v", err)
+		t.Fatalf("整数参数被拒了：%v", err)
 	}
 }
 
-func TestGatewayCreateAllowsNumbersInsideResponseFormatSchema(t *testing.T) {
+// TestGatewayCreateRejectsUncanonicalizableNumbersEverywhere 是本关的主表。
+//
+// 🔴 每一行都必须同时满足两件事：**被拒**，且**报错点名字段路径**。后者不是文风要求——
+// 这一关不拦的话，同样的输入在中枢那边的下场是（2026-08-19 在中枢仓逐行核过）：
+// 整份请求 body 进 `computeFingerprint`（gateway create.go:62）→ `instanceauth/jcs.go:31`
+// 的 CanonicalizeJSON 拒掉 → **create.go:62-65 丢掉 JCS 原文**，改写成
+// `invalid_invocation_request` + `fields=["request"]`，接入方拿到的报错既不知道是哪个字段、
+// 也不知道问题出在小数。中枢自己把这个退化形态写成过反例
+// （gateway 的 response_format_test.go:102-107：「不能退化为 fields=[request]」）。
+// ⇒ SDK 这一关是目前唯一能把它定位到字段的地方。
+func TestGatewayCreateRejectsUncanonicalizableNumbersEverywhere(t *testing.T) {
+	cases := []struct {
+		name       string
+		parameters string
+		wantPath   string
+	}{
+		{
+			// 早先那版白名单把 speech 整族当作"数字字段"整体放行，于是 1.2 在
+			// Validate 这关是绿的，真发请求时才在指纹那步炸——而那条测试只调
+			// Validate()，没走发送路径，所以它的绿证明不了"这个请求发得出去"。
+			name:       "speech speed 小数",
+			parameters: `{"voice_id":"x","pitch":0,"speed":1.2,"vol":1.5}`,
+			wantPath:   "spec.parameters.speed",
+		},
+		{
+			// temperature 是 text 的**顶层** decimal_string 字段，早先那版白名单漏了它。
+			name:       "text temperature 小数",
+			parameters: `{"temperature":0.7}`,
+			wantPath:   "spec.parameters.temperature",
+		},
+		{
+			// music 的 audio_setting.sample_rate / bitrate 是 decimal_string，但嵌套在
+			// audio_setting 里。早先那版的判定条件只认顶层键，**结构上**就够不到它们。
+			name:       "music audio_setting 嵌套小数",
+			parameters: `{"audio_setting":{"sample_rate":44100.0,"format":"mp3"}}`,
+			wantPath:   "spec.parameters.audio_setting.sample_rate",
+		},
+		{
+			// 早先那版整个跳过 response_format，理由是"JSON Schema 的约束天然是数字"。
+			// 但中枢**明确拒绝**它里面的小数，还专门给了自诊断文案
+			// （gateway 侧：「schema 中的 JSON 数字不能使用小数或指数，请改用整数十进制」）。
+			// 跳过它等于让 SDK 放行一个中枢一定会拒的请求。
+			name:       "response_format 里的小数约束",
+			parameters: `{"response_format":{"type":"json_schema","json_schema":{"name":"a","schema":{"properties":{"score":{"minimum":0.5}}}}}}`,
+			wantPath:   "spec.parameters.response_format.json_schema.schema.properties.score.minimum",
+		},
+		{
+			name:       "指数记法",
+			parameters: `{"seconds":1e3}`,
+			wantPath:   "spec.parameters.seconds",
+		},
+		{
+			name:       "数组元素里的小数",
+			parameters: `{"weights":[1,2.5]}`,
+			wantPath:   "spec.parameters.weights[1]",
+		},
+		{
+			// jcs 子集的第二条限制：整数也必须落在 int64 内。
+			name:       "超出 int64 的整数",
+			parameters: `{"n":99999999999999999999}`,
+			wantPath:   "spec.parameters.n",
+		},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			err := speechRequestWithParameters(testCase.parameters).Validate()
+			if err == nil {
+				t.Fatalf("%s 必须被拒", testCase.parameters)
+			}
+			if !strings.Contains(err.Error(), testCase.wantPath) {
+				t.Fatalf("报错必须点名 %s，接入方才能自助定位；实际：%v", testCase.wantPath, err)
+			}
+		})
+	}
+}
+
+// TestGatewayCreateRejectsUncanonicalizableNumbersInInput 覆盖 spec.input 那一侧。
+//
+// assertion digest 规范化的是**整个请求体**，只查 parameters 会让 input 里的同类数值
+// 躲到 digest 那一步才炸——同一条规则在一半字段上执行、在另一半上不执行，是新的不一致。
+func TestGatewayCreateRejectsUncanonicalizableNumbersInInput(t *testing.T) {
 	request := validGatewayCreateRequest()
-	request.SKU = "text.generate.v1"
-	request.TaskRef = "schema-task-01"
-	request.Spec.Parameters = json.RawMessage(`{"response_format":{"type":"json_schema","json_schema":{"name":"answer","schema":{"type":"object","properties":{"title":{"type":"string","minLength":1},"score":{"type":"number","minimum":0,"maximum":1},"items":{"type":"array","minItems":1}}}}}}`)
-
-	body, err := json.Marshal(request)
-	if err != nil {
-		t.Fatalf("marshal response format request: %v", err)
+	request.Spec.Input = json.RawMessage(`{"text":"hi","weight":0.8}`)
+	err := request.Validate()
+	if err == nil {
+		t.Fatal("spec.input 里的小数必须被拒")
 	}
-	t.Logf("response_format request body=%s", body)
-	if err := request.Validate(); err != nil {
-		t.Fatalf("numeric JSON Schema constraints were rejected: %v", err)
+	if !strings.Contains(err.Error(), "spec.input.weight") {
+		t.Fatalf("报错必须点名 spec.input.weight：%v", err)
 	}
 }
 
-func TestGatewayCreateAllowsImageDecimalStringParameter(t *testing.T) {
+// TestGatewayCreateDefersSchemaTypingToTheGateway 钉住这一关**不冒充 schema 校验**。
+//
+// image_count 在中枢声明为 decimal_string，写成整数 4 是错的——但拒它需要一份逐 SKU
+// 请求 schema 的手抄本，而中枢那份按运营配置动态派生（publicParameterRule 会把任何配了
+// min/max 的 param_schema 字段渲染成 decimal_string）。抄不全就会静默漏字段，所以这里
+// 明确放手：整数形态交给中枢拒，它知道 const/min/max/enum，报错比 SDK 猜的准。
+//
+// ⚠ 这条测试红了不代表它坏了——它代表有人给 SDK 加回了字段级 schema 判断。
+// 先回答「这份清单靠什么跟上中枢的动态派生」，再决定要不要改断言。
+func TestGatewayCreateDefersSchemaTypingToTheGateway(t *testing.T) {
 	request := validGatewayCreateRequest()
 	request.SKU = "image.generate.v1"
 	request.TaskRef = "image-task-01"
-	request.Spec.Parameters = json.RawMessage(`{"image_count":"4","resolution":"512","quality":"q2","aspect_ratio":"1:1"}`)
-
-	body, err := json.Marshal(request)
-	if err != nil {
-		t.Fatalf("marshal image request: %v", err)
-	}
-	t.Logf("image request body=%s", body)
+	request.Spec.Parameters = json.RawMessage(`{"image_count":4,"resolution":"512","quality":"q2"}`)
 	if err := request.Validate(); err != nil {
-		t.Fatalf("decimal-string image parameter was rejected: %v", err)
+		t.Fatalf("整数形态的 decimal_string 字段应当放行给中枢判：%v", err)
+	}
+
+	// 正确写法（十进制字符串）当然也放行——否则上面的绿只是"这个字段总是放行"。
+	request.Spec.Parameters = json.RawMessage(`{"image_count":"4","resolution":"512","quality":"q2"}`)
+	if err := request.Validate(); err != nil {
+		t.Fatalf("十进制字符串必须放行：%v", err)
 	}
 }
 
-func TestGatewayCreateRejectsDecimalStringNumericParameterAndShortKeys(t *testing.T) {
-	request := validGatewayCreateRequest()
-	request.SKU = "image.generate.v1"
-	request.TaskRef = "image-task-invalid-01"
-	request.Spec.Parameters = json.RawMessage(`{"image_count":4,"resolution":"512","quality":"q2","aspect_ratio":"1:1"}`)
-
-	body, err := json.Marshal(request)
-	if err != nil {
-		t.Fatalf("marshal invalid image request: %v", err)
+// TestGatewayNumberRuleMatchesJCSSubset 是这一关的**跨仓漂移守卫**。
+//
+// 这一关的正当性全部来自「判据与 jcs 子集同源」。jcs 包是中枢冻结参考实现
+// （contract-input/reference/jcs-server-reference.go.txt）的镜像，它一变，这一关就必须跟着变。
+// 逐样本断言两边判定一致：Validate 拒 ⟺ CanonicalizeJSON 拒。
+// 样本只在**数字形态**这一维变化——jcs 还会拒重复键、坏 UTF-8 等，那些不归这一关管。
+func TestGatewayNumberRuleMatchesJCSSubset(t *testing.T) {
+	samples := []string{
+		`{"a":1}`,
+		`{"a":0}`,
+		`{"a":-7}`,
+		`{"a":1.5}`,
+		`{"a":1e3}`,
+		`{"a":1E-3}`,
+		`{"a":99999999999999999999}`,
+		`{"a":{"b":[1,2]}}`,
+		`{"a":{"b":[1,2.5]}}`,
+		`{"a":"1.5"}`,
+		`{"a":true,"b":null,"c":"x"}`,
 	}
-	t.Logf("invalid image request body=%s", body)
-	if err := request.Validate(); err == nil {
-		t.Fatal("image_count JSON number was accepted")
-	} else if !strings.Contains(err.Error(), "image_count") || !strings.Contains(err.Error(), "decimal string") {
-		t.Fatalf("image_count error is not self-diagnosing: %v", err)
-	} else {
-		t.Logf("validation error=%v", err)
+	for _, sample := range samples {
+		validateRejected := validateGatewayParameters([]byte(sample)) != nil
+		_, jcsErr := jcs.CanonicalizeJSON([]byte(sample))
+		jcsRejected := jcsErr != nil
+		if validateRejected != jcsRejected {
+			t.Errorf("判定与 jcs 子集不一致 %s：Validate 拒=%v，CanonicalizeJSON 拒=%v（%v）",
+				sample, validateRejected, jcsRejected, jcsErr)
+		}
 	}
+}
 
-	request.Spec.Parameters = map[string]string{"duration": "5"}
+// TestGatewayNumberErrorIsDeterministic 钉住报错的确定性。
+//
+// Go 的 map 迭代顺序是随机的。含两个坏字段的请求如果不排序遍历，报哪一个每次都可能不同——
+// 对接方看到飘忽的报错，测试也会间歇性红。
+func TestGatewayNumberErrorIsDeterministic(t *testing.T) {
+	const parameters = `{"zulu":1.5,"alpha":2.5,"mike":3.5}`
+	first := validateGatewayParameters([]byte(parameters))
+	if first == nil {
+		t.Fatal("多个坏字段必须被拒")
+	}
+	for attempt := 0; attempt < 50; attempt++ {
+		again := validateGatewayParameters([]byte(parameters))
+		if again == nil || again.Error() != first.Error() {
+			t.Fatalf("第 %d 次报错与首次不同：%v vs %v", attempt, again, first)
+		}
+	}
+	// 排序遍历 ⇒ 报的是字典序最小的那个字段。
+	if !strings.Contains(first.Error(), "spec.parameters.alpha") {
+		t.Fatalf("确定性报错应点名字典序最小的 alpha：%v", first)
+	}
+}
+
+func TestGatewayCreateRejectsShortIdempotencyKey(t *testing.T) {
 	if err := validateGatewayIdempotencyKey("short"); err == nil {
 		t.Fatal("short idempotency key was accepted")
 	}
+	if err := validateGatewayIdempotencyKey("this-is-a-valid-idempotency-key"); err != nil {
+		t.Fatalf("valid idempotency key rejected: %v", err)
+	}
 }
 
-// TestCreateRequestAlwaysSerializesModerationReceiptKey 钉的是「空收据必须仍然出现在线上」。
-//
-// gateway 的 parseCreateBody 显式要求 moderation_receipt 这个**键存在**，缺键当场 400
-// （sluice backend/service/gateway/internal/httpapi/fingerprint.go:109-111）。而 moderation
-// SKU 自己必须传空串——中枢 e2e 传的也是空串。两条合起来的结果是：这个字段既不能省、
-// 又必须能为空，因此 json tag 绝不能加 omitempty。
-//
-// 加了 omitempty 不会有任何编译错误或类型错误，只会让 moderation 的请求悄悄少一个键，
-// 而症状是七个 SKU 一起 400 —— 报错方向指向"请求结构错"，与真因"某人给一个字段加了
-// 一个看起来无害的 tag"相隔很远。所以这条必须是机器判据，不能只写注释。
 func TestCreateRequestAlwaysSerializesModerationReceiptKey(t *testing.T) {
 	encoded, err := json.Marshal(GatewayCreateRequest{
 		SKU:               "moderation.generate.v1",
@@ -515,34 +634,5 @@ func TestCreateRequestAlwaysSerializesModerationReceiptKey(t *testing.T) {
 	}
 	if got := string(probe["moderation_receipt"]); got != `""` {
 		t.Fatalf("空收据必须序列化成空串，实际 %s", got)
-	}
-}
-
-// TestGatewayParametersRejectEveryDecimalStringFieldAsNumber 钉住 decimal_string 白名单的**全集**。
-//
-// 为什么按字段逐个测：本轮改动把「拒绝一切 JSON number」收窄成「只拒绝 schema 声明为
-// decimal_string 的字段」。收窄本身是对的，但白名单一旦漏一个字段，SDK 就悄悄不再拦它，
-// 而中枢会在更靠后的地方用更难懂的信息拒掉——症状与「SDK 放行了本该放行的」完全同形。
-// 实测：初版白名单只列了 image_count，漏掉了 video 的 seconds。
-func TestGatewayParametersRejectEveryDecimalStringFieldAsNumber(t *testing.T) {
-	for field := range gatewayDecimalStringParameters {
-		raw := []byte(`{"` + field + `": 4}`)
-		err := validateGatewayParameters(raw)
-		if err == nil {
-			t.Errorf("spec.parameters.%s 是 decimal_string 字段，写成 JSON number 必须被拒", field)
-			continue
-		}
-		if !strings.Contains(err.Error(), field) {
-			t.Errorf("拒绝 %s 时的报错必须指名该字段，接入方才能不看 SDK 源码自助定位：%v", field, err)
-		}
-		// 同一字段写成十进制字符串必须放行——否则上面的红只是"这个字段总是被拒"。
-		if err := validateGatewayParameters([]byte(`{"` + field + `": "4"}`)); err != nil {
-			t.Errorf("spec.parameters.%s 写成十进制字符串必须放行：%v", field, err)
-		}
-	}
-	// 覆盖锚：白名单被清空时上面的循环一次都不执行而测试照样绿。
-	if len(gatewayDecimalStringParameters) < 2 {
-		t.Fatalf("decimal_string 白名单只剩 %d 项；中枢 golden 里至少有 image_count 与 seconds 两个",
-			len(gatewayDecimalStringParameters))
 	}
 }
