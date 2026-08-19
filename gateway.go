@@ -17,6 +17,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/emiya-dev/musereel-sdk/jcs"
 )
 
 // GatewayDeliveryMode 由 Gateway 侧 SKU 目录决定。SDK 提供分开的调用方法，
@@ -713,7 +715,7 @@ func validateGatewayParameters(raw []byte) error {
 	if _, ok := value.(map[string]any); !ok {
 		return fmt.Errorf("spec.parameters must be a JSON object")
 	}
-	return validateGatewayCanonicalizableNumbers(value, "spec.parameters")
+	return validateGatewayCanonicalizable(raw, value, "spec.parameters")
 }
 
 func validateGatewayInput(raw []byte) error {
@@ -721,7 +723,30 @@ func validateGatewayInput(raw []byte) error {
 	if err != nil {
 		return err
 	}
-	return validateGatewayCanonicalizableNumbers(value, "spec.input")
+	return validateGatewayCanonicalizable(raw, value, "spec.input")
+}
+
+// validateGatewayCanonicalizable 的判据**就是 jcs 本身**，不是它的一份复刻。
+//
+// 早先这里自己重新实现了「小数 / 指数 / 超 int64 一律拒」的规则，声称与 jcs 子集同源。
+// 对 JSON 数字那一维确实等价，但 jcs 的拒绝面比数字大：`{"a":1,"a":2}` 这种重复键
+// jcs 硬拒（jcs.go 走 token 流），而 encoding/json 是**末键静默覆盖**，于是复刻版放行、
+// 真发请求时在算 digest 那步才炸。复刻一份判据就会有这种缝，所以改成直接问 jcs。
+//
+// 遍历的职责因此收缩成一件事：**在 jcs 说"不行"之后，把它定位到具体字段**。
+// jcs 的原始报错（"json number must be integer decimal string form"）不带任何字段名，
+// 而中枢那边同一条错误会被 create.go 改写成 fields=["request"]，更没有定位价值。
+func validateGatewayCanonicalizable(raw []byte, value any, path string) error {
+	_, canonicalErr := jcs.CanonicalizeJSON(raw)
+	if canonicalErr == nil {
+		return nil
+	}
+	if located := locateUncanonicalizableNumber(value, path); located != nil {
+		return located
+	}
+	// 定位不到具体字段（重复键、坏 UTF-8、未配对代理项等）：透传 jcs 的原因，
+	// 至少说清是 input 还是 parameters 那一段。
+	return fmt.Errorf("%s cannot be canonicalized by the gateway: %w", path, canonicalErr)
 }
 
 func decodeGatewayJSONValue(raw []byte, path string) (any, error) {
@@ -737,8 +762,8 @@ func decodeGatewayJSONValue(raw []byte, path string) (any, error) {
 	return value, nil
 }
 
-// validateGatewayCanonicalizableNumbers 拒绝**无法通过请求规范化**的 JSON 数字，
-// 并在报错里带上字段路径。
+// locateUncanonicalizableNumber 在 jcs 判定这段 JSON 过不了规范化之后，找出**是哪个
+// 数字**害的并给出字段路径；找不到（拒因不是数字）返回 nil，由调用方透传 jcs 的原因。
 //
 // 为什么这一关判「能不能规范化」而不是「这个字段是不是 decimal_string」：
 // 后者需要 SDK 里维护一份逐 SKU 请求 schema 的手抄本，而中枢那份是**按运营配置
@@ -758,15 +783,26 @@ func decodeGatewayJSONValue(raw []byte, path string) (any, error) {
 // decimal_string（例：image_count: 4）。那种错由中枢拒——它知道 const / min / max /
 // enum，报错比 SDK 猜的准。SDK 只负责拦住「连规范化都过不去、否则要到算 digest
 // 时才炸且不带路径」的那一类。
-func validateGatewayCanonicalizableNumbers(value any, path string) error {
+func locateUncanonicalizableNumber(value any, path string) error {
 	switch current := value.(type) {
 	case json.Number:
 		text := current.String()
 		if strings.ContainsAny(text, ".eE") {
-			// ⚠ 不要在这里笼统建议「改传字符串」：该字段接不接受 JSON 字符串取决于它在
-			// 目录里的声明。decimal_string 字段要字符串（text 的 temperature 就是这么发的），
-			// 而声明为 number / integer 的字段拿到字符串会被中枢的手写校验当场拒
-			// （首字节不是数字或负号即拒）。所以这里只陈述事实并指路到目录。
+			// ⚠ 不要在这里笼统建议「改传字符串」，两种情形的正确做法不同：
+			//
+			// ① response_format 子树里的数字是 **JSON Schema 关键字**（minimum、maxItems…）。
+			//    把它改成字符串就不是合法的 JSON Schema 了——那条建议会把人带沟里。
+			//    中枢对这条有专用文案「schema 中的 JSON 数字不能使用小数或指数，请改用整数十进制」。
+			// ② 其余字段接不接受 JSON 字符串取决于它在目录里的声明：decimal_string 要字符串
+			//    （text 的 temperature 就是这么发的），而声明为 number / integer 的字段拿到
+			//    字符串会被中枢的手写校验当场拒（首字节不是数字或负号即拒）。
+			if strings.Contains(path, ".response_format") {
+				return fmt.Errorf(
+					"%s is the JSON number %s, which the gateway cannot canonicalize: request fingerprints use an "+
+						"integer-only JCS subset. This value is a JSON Schema keyword inside response_format, so it "+
+						"must be written in integer decimal notation (quoting it would not be valid JSON Schema)",
+					path, text)
+			}
 			return fmt.Errorf(
 				"%s is the JSON number %s, which the gateway cannot canonicalize: request fingerprints use an "+
 					"integer-only JCS subset. Check this SKU's request schema: decimal_string fields take a JSON "+
@@ -780,7 +816,7 @@ func validateGatewayCanonicalizableNumbers(value any, path string) error {
 		}
 	case []any:
 		for index, item := range current {
-			if err := validateGatewayCanonicalizableNumbers(item, fmt.Sprintf("%s[%d]", path, index)); err != nil {
+			if err := locateUncanonicalizableNumber(item, fmt.Sprintf("%s[%d]", path, index)); err != nil {
 				return err
 			}
 		}
@@ -794,7 +830,7 @@ func validateGatewayCanonicalizableNumbers(value any, path string) error {
 		}
 		sort.Strings(keys)
 		for _, key := range keys {
-			if err := validateGatewayCanonicalizableNumbers(current[key], path+"."+key); err != nil {
+			if err := locateUncanonicalizableNumber(current[key], path+"."+key); err != nil {
 				return err
 			}
 		}

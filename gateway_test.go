@@ -582,10 +582,11 @@ func TestGatewayCreateDefersSchemaTypingToTheGateway(t *testing.T) {
 
 // TestGatewayNumberRuleMatchesJCSSubset 是这一关的**跨仓漂移守卫**。
 //
-// 这一关的正当性全部来自「判据与 jcs 子集同源」。jcs 包是中枢冻结参考实现
-// （contract-input/reference/jcs-server-reference.go.txt）的镜像，它一变，这一关就必须跟着变。
-// 逐样本断言两边判定一致：Validate 拒 ⟺ CanonicalizeJSON 拒。
-// 样本只在**数字形态**这一维变化——jcs 还会拒重复键、坏 UTF-8 等，那些不归这一关管。
+// 这一关的判据就是 jcs 本身（validateGatewayCanonicalizable 直接调 CanonicalizeJSON），
+// 所以这里断言的是「两边判定逐样本一致」——包括**非数字**的拒因。
+// 早先这里复刻了一份数字规则，样本也只覆盖数字形态，于是重复键这种 jcs 拒、复刻版放行的
+// 缝隙落在样本之外：`{"a":1,"a":2}` 在 encoding/json 里是末键静默覆盖，不报错。
+// 二次审查（composer 路）实测抓到，改判据后一并纳入。
 func TestGatewayNumberRuleMatchesJCSSubset(t *testing.T) {
 	samples := []string{
 		`{"a":1}`,
@@ -599,6 +600,10 @@ func TestGatewayNumberRuleMatchesJCSSubset(t *testing.T) {
 		`{"a":{"b":[1,2.5]}}`,
 		`{"a":"1.5"}`,
 		`{"a":true,"b":null,"c":"x"}`,
+		// 非数字拒因：判据换成 jcs 之后这些也必须一致。
+		`{"a":1,"a":2}`,
+		`{"a":{"b":1,"b":2}}`,
+		`{"a":[{"c":1,"c":2}]}`,
 	}
 	for _, sample := range samples {
 		validateRejected := validateGatewayParameters([]byte(sample)) != nil
@@ -608,6 +613,53 @@ func TestGatewayNumberRuleMatchesJCSSubset(t *testing.T) {
 			t.Errorf("判定与 jcs 子集不一致 %s：Validate 拒=%v，CanonicalizeJSON 拒=%v（%v）",
 				sample, validateRejected, jcsRejected, jcsErr)
 		}
+	}
+}
+
+// TestGatewayRejectsDuplicateKeys 钉住「判据是 jcs 本身，不是它的数字子集」。
+//
+// 重复键在 encoding/json 里是末键静默覆盖——任何基于 map 的复刻判据都看不见它，
+// 而 jcs 走 token 流硬拒。这条红了通常意味着有人把判据改回了自己实现的那份。
+func TestGatewayRejectsDuplicateKeys(t *testing.T) {
+	cases := map[string]string{
+		"spec.parameters": `{"a":1,"a":2}`,
+		"嵌套对象":            `{"outer":{"a":1,"a":2}}`,
+	}
+	for name, parameters := range cases {
+		t.Run(name, func(t *testing.T) {
+			err := speechRequestWithParameters(parameters).Validate()
+			if err == nil {
+				t.Fatalf("重复键必须被拒：%s", parameters)
+			}
+			// 定位不到具体字段是可以接受的（拒因不是数字），但必须说清是哪一段，
+			// 并透传 jcs 的原因——否则这条报错和中枢那个 fields=["request"] 一样没用。
+			if !strings.Contains(err.Error(), "spec.parameters") {
+				t.Fatalf("报错必须点明是 spec.parameters 那一段：%v", err)
+			}
+			if !strings.Contains(err.Error(), "duplicate key") {
+				t.Fatalf("报错必须透传 jcs 的原因，接入方才知道是重复键：%v", err)
+			}
+		})
+	}
+}
+
+// TestGatewayResponseFormatAdviceIsNotMisleading 钉住 response_format 子树的报错措辞。
+//
+// 那里面的数字是 **JSON Schema 关键字**（minimum、maxItems…），不是 SKU 的
+// decimal_string 参数。通用文案建议「decimal_string 字段传 JSON 字符串」，照做把
+// minimum 写成 "0.5" 会绕过这一关，但那已经不是合法的 JSON Schema——把人带沟里。
+// 二次审查（composer 路）提出，实测成立后分叉文案。
+func TestGatewayResponseFormatAdviceIsNotMisleading(t *testing.T) {
+	const parameters = `{"response_format":{"type":"json_schema","json_schema":{"name":"a","schema":{"properties":{"score":{"minimum":0.5}}}}}}`
+	err := speechRequestWithParameters(parameters).Validate()
+	if err == nil {
+		t.Fatal("response_format 里的小数必须被拒")
+	}
+	if !strings.Contains(err.Error(), "JSON Schema keyword") {
+		t.Fatalf("必须说明这是 JSON Schema 关键字，不能套用 decimal_string 那套建议：%v", err)
+	}
+	if strings.Contains(err.Error(), "decimal_string fields take a JSON string") {
+		t.Fatalf("不得对 JSON Schema 关键字建议加引号——那不是合法 JSON Schema：%v", err)
 	}
 }
 
