@@ -803,11 +803,17 @@ func locateUncanonicalizableNumber(value any, path string) error {
 						"must be written in integer decimal notation (quoting it would not be valid JSON Schema)",
 					path, text)
 			}
+			// ⚠ 不要把被拒的 token 原文 %q 进建议里当"照抄这个"——中枢的 decimal_string
+			// 要的是**规范十进制形式**，判据是 `strconv.FormatInt(parsed, 10) == raw` 逐字相等
+			// （video.go:591-593、image_spec.go:106-108 等）。把 1e3 建议成 "1e3"、
+			// 把 44100.0 建议成 "44100.0"，接入方照做会被中枢换一种方式再拒一次。
+			// 所以这里给**形式示范**，不回填原文。
 			return fmt.Errorf(
 				"%s is the JSON number %s, which the gateway cannot canonicalize: request fingerprints use an "+
 					"integer-only JCS subset. Check this SKU's request schema: decimal_string fields take a JSON "+
-					"string (%q); integer/number fields take an integer",
-				path, text, text)
+					"string in canonical decimal form (no fractional part, no exponent); integer/number "+
+					"fields take an integer",
+				path, text)
 		}
 		if _, err := strconv.ParseInt(text, 10, 64); err != nil {
 			return fmt.Errorf(

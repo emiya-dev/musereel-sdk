@@ -604,6 +604,15 @@ func TestGatewayNumberRuleMatchesJCSSubset(t *testing.T) {
 		`{"a":1,"a":2}`,
 		`{"a":{"b":1,"b":2}}`,
 		`{"a":[{"c":1,"c":2}]}`,
+		// 边界形态（二次审查 grok 路指出样本表疏漏，实现本来就等价，但没被钉住）。
+		`{"a":-0}`,
+		`{"a":1.0}`,
+		`{"a":-0.0}`,
+		`{"a":1E+2}`,
+		`{"a":0e0}`,
+		`{"a":9223372036854775807}`,
+		`{"a":-9223372036854775808}`,
+		`{"a":9223372036854775808}`,
 	}
 	for _, sample := range samples {
 		validateRejected := validateGatewayParameters([]byte(sample)) != nil
@@ -660,6 +669,44 @@ func TestGatewayResponseFormatAdviceIsNotMisleading(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "decimal_string fields take a JSON string") {
 		t.Fatalf("不得对 JSON Schema 关键字建议加引号——那不是合法 JSON Schema：%v", err)
+	}
+}
+
+// TestGatewayAdviceNeverEchoesTheRejectedToken 钉住「建议必须可执行」。
+//
+// 早先文案用 %q 把被拒的 token 原文塞进建议，于是 1e3 被建议成 "1e3"、
+// 44100.0 被建议成 "44100.0"。中枢的 decimal_string 要的是**规范十进制形式**——
+// 判据是 strconv.FormatInt(parsed, 10) 与原文逐字相等（sluice 侧 video.go:591-593、
+// image_spec.go:106-108）——所以接入方照着改完会被换一种方式再拒一次。
+// 二次审查（grok 路）提出，实测成立。
+func TestGatewayAdviceNeverEchoesTheRejectedToken(t *testing.T) {
+	cases := []struct {
+		name       string
+		parameters string
+		token      string
+	}{
+		{"指数", `{"seconds":1e3}`, "1e3"},
+		{"小数", `{"image_count":4.0}`, "4.0"},
+		{"嵌套小数", `{"audio_setting":{"sample_rate":44100.0}}`, "44100.0"},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			err := speechRequestWithParameters(testCase.parameters).Validate()
+			if err == nil {
+				t.Fatalf("必须被拒：%s", testCase.parameters)
+			}
+			// 报错可以（也应该）**陈述**被拒的是哪个值，但不能把它包在引号里
+			// 当成"改成这个字符串"的建议。
+			// ⚠ 只检查**本用例自己**那个 token：文案里若带固定示例串，会与某个用例的
+			// token 撞车，那时红的是测试不是实现（初版就这么翻过一次，示例 "4.0"
+			// 撞上了小数用例）。⇒ 文案现在不带任何示例串。
+			if strings.Contains(err.Error(), `"`+testCase.token+`"`) {
+				t.Fatalf("建议里回填了被拒的原文 %q——照做仍会被中枢拒：%v", testCase.token, err)
+			}
+			if !strings.Contains(err.Error(), "canonical decimal form") {
+				t.Fatalf("建议必须点明要规范十进制形式：%v", err)
+			}
+		})
 	}
 }
 
