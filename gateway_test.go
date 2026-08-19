@@ -412,12 +412,74 @@ func TestGatewayRetryableTableAndWireMismatch(t *testing.T) {
 	}
 }
 
-func TestGatewayCreateRejectsNumericParametersAndShortKeys(t *testing.T) {
+func TestGatewayCreateAllowsSpeechNumericParameters(t *testing.T) {
 	request := validGatewayCreateRequest()
-	request.Spec.Parameters = map[string]any{"duration": 5}
-	if err := request.Validate(); err == nil {
-		t.Fatal("numeric parameter was accepted")
+	request.SKU = "speech.generate.v1"
+	request.TaskRef = "speech-task-01"
+	request.Spec.Input = map[string]any{"text": "hello"}
+	request.Spec.Parameters = json.RawMessage(`{"voice_id":"x","pitch":0,"speed":1.2,"vol":1.5}`)
+
+	body, err := json.Marshal(request)
+	if err != nil {
+		t.Fatalf("marshal speech request: %v", err)
 	}
+	t.Logf("speech request body=%s", body)
+	if err := request.Validate(); err != nil {
+		t.Fatalf("speech numeric parameters were rejected: %v", err)
+	}
+}
+
+func TestGatewayCreateAllowsNumbersInsideResponseFormatSchema(t *testing.T) {
+	request := validGatewayCreateRequest()
+	request.SKU = "text.generate.v1"
+	request.TaskRef = "schema-task-01"
+	request.Spec.Parameters = json.RawMessage(`{"response_format":{"type":"json_schema","json_schema":{"name":"answer","schema":{"type":"object","properties":{"title":{"type":"string","minLength":1},"score":{"type":"number","minimum":0,"maximum":1},"items":{"type":"array","minItems":1}}}}}}`)
+
+	body, err := json.Marshal(request)
+	if err != nil {
+		t.Fatalf("marshal response format request: %v", err)
+	}
+	t.Logf("response_format request body=%s", body)
+	if err := request.Validate(); err != nil {
+		t.Fatalf("numeric JSON Schema constraints were rejected: %v", err)
+	}
+}
+
+func TestGatewayCreateAllowsImageDecimalStringParameter(t *testing.T) {
+	request := validGatewayCreateRequest()
+	request.SKU = "image.generate.v1"
+	request.TaskRef = "image-task-01"
+	request.Spec.Parameters = json.RawMessage(`{"image_count":"4","resolution":"512","quality":"q2","aspect_ratio":"1:1"}`)
+
+	body, err := json.Marshal(request)
+	if err != nil {
+		t.Fatalf("marshal image request: %v", err)
+	}
+	t.Logf("image request body=%s", body)
+	if err := request.Validate(); err != nil {
+		t.Fatalf("decimal-string image parameter was rejected: %v", err)
+	}
+}
+
+func TestGatewayCreateRejectsDecimalStringNumericParameterAndShortKeys(t *testing.T) {
+	request := validGatewayCreateRequest()
+	request.SKU = "image.generate.v1"
+	request.TaskRef = "image-task-invalid-01"
+	request.Spec.Parameters = json.RawMessage(`{"image_count":4,"resolution":"512","quality":"q2","aspect_ratio":"1:1"}`)
+
+	body, err := json.Marshal(request)
+	if err != nil {
+		t.Fatalf("marshal invalid image request: %v", err)
+	}
+	t.Logf("invalid image request body=%s", body)
+	if err := request.Validate(); err == nil {
+		t.Fatal("image_count JSON number was accepted")
+	} else if !strings.Contains(err.Error(), "image_count") || !strings.Contains(err.Error(), "decimal string") {
+		t.Fatalf("image_count error is not self-diagnosing: %v", err)
+	} else {
+		t.Logf("validation error=%v", err)
+	}
+
 	request.Spec.Parameters = map[string]string{"duration": "5"}
 	if err := validateGatewayIdempotencyKey("short"); err == nil {
 		t.Fatal("short idempotency key was accepted")
@@ -453,5 +515,34 @@ func TestCreateRequestAlwaysSerializesModerationReceiptKey(t *testing.T) {
 	}
 	if got := string(probe["moderation_receipt"]); got != `""` {
 		t.Fatalf("空收据必须序列化成空串，实际 %s", got)
+	}
+}
+
+// TestGatewayParametersRejectEveryDecimalStringFieldAsNumber 钉住 decimal_string 白名单的**全集**。
+//
+// 为什么按字段逐个测：本轮改动把「拒绝一切 JSON number」收窄成「只拒绝 schema 声明为
+// decimal_string 的字段」。收窄本身是对的，但白名单一旦漏一个字段，SDK 就悄悄不再拦它，
+// 而中枢会在更靠后的地方用更难懂的信息拒掉——症状与「SDK 放行了本该放行的」完全同形。
+// 实测：初版白名单只列了 image_count，漏掉了 video 的 seconds。
+func TestGatewayParametersRejectEveryDecimalStringFieldAsNumber(t *testing.T) {
+	for field := range gatewayDecimalStringParameters {
+		raw := []byte(`{"` + field + `": 4}`)
+		err := validateGatewayParameters(raw)
+		if err == nil {
+			t.Errorf("spec.parameters.%s 是 decimal_string 字段，写成 JSON number 必须被拒", field)
+			continue
+		}
+		if !strings.Contains(err.Error(), field) {
+			t.Errorf("拒绝 %s 时的报错必须指名该字段，接入方才能不看 SDK 源码自助定位：%v", field, err)
+		}
+		// 同一字段写成十进制字符串必须放行——否则上面的红只是"这个字段总是被拒"。
+		if err := validateGatewayParameters([]byte(`{"` + field + `": "4"}`)); err != nil {
+			t.Errorf("spec.parameters.%s 写成十进制字符串必须放行：%v", field, err)
+		}
+	}
+	// 覆盖锚：白名单被清空时上面的循环一次都不执行而测试照样绿。
+	if len(gatewayDecimalStringParameters) < 2 {
+		t.Fatalf("decimal_string 白名单只剩 %d 项；中枢 golden 里至少有 image_count 与 seconds 两个",
+			len(gatewayDecimalStringParameters))
 	}
 }
