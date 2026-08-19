@@ -12,10 +12,13 @@ import (
 	"mime"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/emiya-dev/musereel-sdk/jcs"
 )
 
 // GatewayDeliveryMode 由 Gateway 侧 SKU 目录决定。SDK 提供分开的调用方法，
@@ -54,7 +57,8 @@ type GatewayIdentity struct {
 }
 
 // GatewayInvocationSpec 是冻结的 spec 对象。Input 和 Parameters 使用 interface，
-// 调用方可传 json.RawMessage 或普通 Go JSON 值；Validate 会拒绝 Parameters 内的 JSON 数值。
+// 调用方可传 json.RawMessage 或普通 Go JSON 值；Validate 拒绝其中**无法被规范化**
+// 的 JSON 数值（小数、指数、超出 int64），整数一律放行。
 type GatewayInvocationSpec struct {
 	SchemaVersion string `json:"schema_version"`
 	Input         any    `json:"input"`
@@ -85,6 +89,12 @@ func (request GatewayCreateRequest) Validate() error {
 	parameters, err := json.Marshal(request.Spec.Parameters)
 	if err != nil || gatewayJSONNull(parameters) {
 		return fmt.Errorf("create request requires a non-null spec.parameters")
+	}
+	// input 与 parameters 走同一关：assertion digest 规范化的是**整个请求体**
+	// （assertion.go 的 jcs.CanonicalizeJSON(body)），只查 parameters 会让 input
+	// 里的同类数值躲到 digest 那一步才炸，而那一步的报错不带字段路径。
+	if err := validateGatewayInput(input); err != nil {
+		return err
 	}
 	if err := validateGatewayParameters(parameters); err != nil {
 		return err
@@ -698,42 +708,174 @@ func validateGatewayIdempotencyKey(key string) error {
 }
 
 func validateGatewayParameters(raw []byte) error {
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.UseNumber()
-	var value any
-	if err := decoder.Decode(&value); err != nil {
-		return fmt.Errorf("spec.parameters is not valid JSON")
-	}
-	if decoder.Decode(&struct{}{}) != io.EOF {
-		return fmt.Errorf("spec.parameters contains trailing JSON")
+	value, err := decodeGatewayJSONValue(raw, "spec.parameters")
+	if err != nil {
+		return err
 	}
 	if _, ok := value.(map[string]any); !ok {
 		return fmt.Errorf("spec.parameters must be a JSON object")
 	}
-	if gatewayJSONContainsNumber(value) {
-		return fmt.Errorf("spec.parameters numeric values must be decimal strings")
-	}
-	return nil
+	return validateGatewayCanonicalizable(raw, value, "spec.parameters")
 }
 
-func gatewayJSONContainsNumber(value any) bool {
+func validateGatewayInput(raw []byte) error {
+	value, err := decodeGatewayJSONValue(raw, "spec.input")
+	if err != nil {
+		return err
+	}
+	return validateGatewayCanonicalizable(raw, value, "spec.input")
+}
+
+// validateGatewayCanonicalizable 的判据**就是 jcs 本身**，不是它的一份复刻。
+//
+// 早先这里自己重新实现了「小数 / 指数 / 超 int64 一律拒」的规则，声称与 jcs 子集同源。
+// 对 JSON 数字那一维确实等价，但 jcs 的拒绝面比数字大：`{"a":1,"a":2}` 这种重复键
+// jcs 硬拒（jcs.go 走 token 流），而 encoding/json 是**末键静默覆盖**，于是复刻版放行、
+// 真发请求时在算 digest 那步才炸。复刻一份判据就会有这种缝，所以改成直接问 jcs。
+//
+// 遍历的职责因此收缩成一件事：**在 jcs 说"不行"之后，把它定位到具体字段**。
+// jcs 的原始报错（"json number must be integer decimal string form"）不带任何字段名，
+// 而中枢那边同一条错误会被 create.go 改写成 fields=["request"]，更没有定位价值。
+// ⚠ 已知代价：`CanonicalizeJSON` 会**完整重解析并重建** canonical 串，而 Validate 对
+// input 与 parameters 各跑一次，加上签名路径对整包再跑一次，一次 create 共三次全量 JCS。
+// 二次审查两路都点了这条，grok 路实测：8MiB 的 input 单次 canonicalize 约 81ms，
+// 线性外推到中枢允许的 64MB body 约 0.6s + 一棵额外的树 + 一份等长的串。
+//
+// 本轮**接受**这个代价：相对一次 video 生成的时长可忽略，而换到的是「过不了规范化的
+// 请求在本地就被按字段拦下」。⇒ 如果将来大 body 真成为问题，正确的修法是**给 jcs 包加
+// 一个只校验不重建的入口**，让这里改调它；不要在这里按 body 大小切换判据——那会让
+// 「这一关查不查重复键」变成 body 大小的函数，是一个新的隐含前提。
+func validateGatewayCanonicalizable(raw []byte, value any, path string) error {
+	_, canonicalErr := jcs.CanonicalizeJSON(raw)
+	if canonicalErr == nil {
+		return nil
+	}
+	// 🔴 只有当 jcs 拒的**确实是数字**时才去定位字段。
+	//
+	// 否则会报错错位：`{"a":2,"a":1.5}` 的真实拒因是重复键（jcs 在解码第二个 value
+	// 之前就拒了），但 decodeGatewayJSONValue 走 encoding/json 是末键覆盖，树里只剩
+	// `a: 1.5`，于是定位器兴高采烈地报「a 是小数」——接入方改完小数，重复键还在，
+	// 再失败一次。二次审查（composer 路第二轮）实测到这条。
+	//
+	// 判错误类型用字符串匹配不优雅，但这是**中枢自己的做法**
+	// （sluice 侧 gateway/fingerprint.go:699 与 invocation/spec.go:170 都是
+	// `strings.Contains(err.Error(), "json number must be integer decimal string form")`），
+	// 跟着同一份 jcs 实现走比自己另发明一套判别更不容易漂。
+	if isJCSNumberRejection(canonicalErr) {
+		if located := locateUncanonicalizableNumber(value, path); located != nil {
+			return located
+		}
+	}
+	// 拒因不是数字（重复键、坏 UTF-8、未配对代理项），或是数字但已被末键覆盖而定位不到：
+	// 透传 jcs 的原因，至少说清是 input 还是 parameters 那一段。
+	return fmt.Errorf("%s cannot be canonicalized by the gateway: %w", path, canonicalErr)
+}
+
+// isJCSNumberRejection 判断 jcs 的拒因是不是「这个 JSON 数字不合规范」。
+// 两条串对应 jcs/jcs.go 对 json.Number 的两条限制；那个包是中枢冻结参考实现的镜像，
+// 串一变这里就要跟着变——TestGatewayNumberRejectionStringsStillMatchJCS 钉住这一点。
+func isJCSNumberRejection(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := err.Error()
+	return strings.Contains(message, "json number must be integer decimal string form") ||
+		strings.Contains(message, "json integer out of int64 range")
+}
+
+func decodeGatewayJSONValue(raw []byte, path string) (any, error) {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	var value any
+	if err := decoder.Decode(&value); err != nil {
+		return nil, fmt.Errorf("%s is not valid JSON", path)
+	}
+	if decoder.Decode(&struct{}{}) != io.EOF {
+		return nil, fmt.Errorf("%s contains trailing JSON", path)
+	}
+	return value, nil
+}
+
+// locateUncanonicalizableNumber 在 jcs 判定这段 JSON 过不了规范化之后，找出**是哪个
+// 数字**害的并给出字段路径；找不到（拒因不是数字）返回 nil，由调用方透传 jcs 的原因。
+//
+// 为什么这一关判「能不能规范化」而不是「这个字段是不是 decimal_string」：
+// 后者需要 SDK 里维护一份逐 SKU 请求 schema 的手抄本，而中枢那份是**按运营配置
+// 动态派生**的（querysurface/public_schema.go 里 publicParameterRule 会把任何配了
+// min/max 的 param_schema 字段渲染成 decimal_string），既抄不全也追不上：
+// 运营在 console 加一个参数，SDK 就静默漏掉一个字段。实测漏网的至少有 text 的
+// temperature（顶层）与 music 的 audio_setting.sample_rate / bitrate（嵌套两层，
+// 只认顶层的白名单结构上就够不到）。
+//
+// 「能不能规范化」这个判据则与 jcs 子集**同源**——见 jcs/jcs.go 对 json.Number 的
+// 两条限制，那个包是中枢冻结参考实现（contract-input/reference/jcs-server-reference.go.txt）
+// 的镜像，跟着它走就没有跨仓漂移。中枢对同一条错误自己也是这么判的
+// （backend/pkg/app/core/jcs.go 拒小数，gateway 侧把它翻译成
+// 「schema 中的 JSON 数字不能使用小数或指数，请改用整数十进制」）。
+//
+// ⚠ 这一关**不冒充 schema 校验**：整数形态的 JSON 数字一律放行，哪怕该字段声明为
+// decimal_string（例：image_count: 4）。那种错由中枢拒——它知道 const / min / max /
+// enum，报错比 SDK 猜的准。SDK 只负责拦住「连规范化都过不去、否则要到算 digest
+// 时才炸且不带路径」的那一类。
+func locateUncanonicalizableNumber(value any, path string) error {
 	switch current := value.(type) {
 	case json.Number:
-		return true
+		text := current.String()
+		if strings.ContainsAny(text, ".eE") {
+			// ⚠ 不要在这里笼统建议「改传字符串」，两种情形的正确做法不同：
+			//
+			// ① response_format 子树里的数字是 **JSON Schema 关键字**（minimum、maxItems…）。
+			//    把它改成字符串就不是合法的 JSON Schema 了——那条建议会把人带沟里。
+			//    中枢对这条有专用文案「schema 中的 JSON 数字不能使用小数或指数，请改用整数十进制」。
+			// ② 其余字段接不接受 JSON 字符串取决于它在目录里的声明：decimal_string 要字符串
+			//    （text 的 temperature 就是这么发的），而声明为 number / integer 的字段拿到
+			//    字符串会被中枢的手写校验当场拒（首字节不是数字或负号即拒）。
+			if strings.Contains(path, ".response_format") {
+				return fmt.Errorf(
+					"%s is the JSON number %s, which the gateway cannot canonicalize: request fingerprints use an "+
+						"integer-only JCS subset. This value is a JSON Schema keyword inside response_format, so it "+
+						"must be written in integer decimal notation (quoting it would not be valid JSON Schema)",
+					path, text)
+			}
+			// ⚠ 不要把被拒的 token 原文 %q 进建议里当"照抄这个"——中枢的 decimal_string
+			// 要的是**规范十进制形式**，判据是 `strconv.FormatInt(parsed, 10) == raw` 逐字相等
+			// （video.go:591-593、image_spec.go:106-108 等）。把 1e3 建议成 "1e3"、
+			// 把 44100.0 建议成 "44100.0"，接入方照做会被中枢换一种方式再拒一次。
+			// 所以这里给**形式示范**，不回填原文。
+			return fmt.Errorf(
+				"%s is the JSON number %s, which the gateway cannot canonicalize: request fingerprints use an "+
+					"integer-only JCS subset. Check this SKU's request schema: decimal_string fields take a JSON "+
+					"string in canonical decimal form (no fractional part, no exponent); integer/number "+
+					"fields take an integer",
+				path, text)
+		}
+		if _, err := strconv.ParseInt(text, 10, 64); err != nil {
+			return fmt.Errorf(
+				"%s is the JSON number %s, which is outside the int64 range the gateway can canonicalize",
+				path, text)
+		}
 	case []any:
-		for _, item := range current {
-			if gatewayJSONContainsNumber(item) {
-				return true
+		for index, item := range current {
+			if err := locateUncanonicalizableNumber(item, fmt.Sprintf("%s[%d]", path, index)); err != nil {
+				return err
 			}
 		}
 	case map[string]any:
-		for _, item := range current {
-			if gatewayJSONContainsNumber(item) {
-				return true
+		// 按键排序遍历：同一个坏请求必须每次都报同一个字段。Go 的 map 迭代顺序是
+		// 随机的，不排序的话「含两个坏字段的请求报哪一个」每次都可能不同——
+		// 对接方会看到飘忽的报错，测试也会间歇性红。
+		keys := make([]string, 0, len(current))
+		for key := range current {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			if err := locateUncanonicalizableNumber(current[key], path+"."+key); err != nil {
+				return err
 			}
 		}
 	}
-	return false
+	return nil
 }
 
 func gatewayJSONNull(raw []byte) bool { return bytes.Equal(bytes.TrimSpace(raw), []byte("null")) }

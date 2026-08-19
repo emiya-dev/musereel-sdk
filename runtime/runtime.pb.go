@@ -3152,7 +3152,12 @@ type QualityTier struct {
 	// vendor_model 是该档位的平台供给上游模型标识；00099 保证同档所有平台 entry 使用同一模型，
 	// 因而它不表示所有调用必然落到的模型。BYOK customer binding 使用客户自带合同的费率，
 	// 不在 route_policy_entry 约束内（BE-171 B6）；此字段只表达平台供给语义。
-	VendorModel   string `protobuf:"bytes,3,opt,name=vendor_model,json=vendorModel,proto3" json:"vendor_model,omitempty"`
+	VendorModel string `protobuf:"bytes,3,opt,name=vendor_model,json=vendorModel,proto3" json:"vendor_model,omitempty"`
+	// dispatchable 表示该档位全部平台 fallback 费率都能过调度闸（AND 投影）；与 vendor_model 同为
+	// 平台供给口径。BYOK 客户费率、authorization_scope 过滤与 adapter/凭据/熔断等其它闸都不在
+	// 这个布尔里，因此 true 不保证某个具体调用方一定能下单，false 也不等于运行期必拒。
+	// 只暴露布尔事实，不暴露成本口径或拒绝原因。
+	Dispatchable  bool `protobuf:"varint,4,opt,name=dispatchable,proto3" json:"dispatchable,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3206,6 +3211,13 @@ func (x *QualityTier) GetVendorModel() string {
 		return x.VendorModel
 	}
 	return ""
+}
+
+func (x *QualityTier) GetDispatchable() bool {
+	if x != nil {
+		return x.Dispatchable
+	}
+	return false
 }
 
 var File_runtime_proto protoreflect.FileDescriptor
@@ -3492,11 +3504,12 @@ const file_runtime_proto_rawDesc = "" +
 	"\n" +
 	"request_id\x18\x01 \x01(\tR\trequestId\x122\n" +
 	"\x05sites\x18\x02 \x03(\v2\x1c.runtime.v1.SiteBrandingItemR\x05sites\x12+\n" +
-	"\x11snapshot_revision\x18\x03 \x01(\tR\x10snapshotRevision\"|\n" +
+	"\x11snapshot_revision\x18\x03 \x01(\tR\x10snapshotRevision\"\xa0\x01\n" +
 	"\vQualityTier\x12\x18\n" +
 	"\aquality\x18\x01 \x01(\tR\aquality\x120\n" +
 	"\x14parameter_schema_jcs\x18\x02 \x01(\fR\x12parameterSchemaJcs\x12!\n" +
-	"\fvendor_model\x18\x03 \x01(\tR\vvendorModel2\xc4\t\n" +
+	"\fvendor_model\x18\x03 \x01(\tR\vvendorModel\x12\"\n" +
+	"\fdispatchable\x18\x04 \x01(\bR\fdispatchable2\xc4\t\n" +
 	"\x0eRuntimeService\x12f\n" +
 	"\x14ExchangeRuntimeToken\x12'.runtime.v1.ExchangeRuntimeTokenRequest\x1a%.runtime.v1.ExchangeRuntimeTokenReply\x12]\n" +
 	"\x13ResolveRegistration\x12&.runtime.v1.ResolveRegistrationRequest\x1a\x1e.runtime.v1.RegistrationIntent\x12\\\n" +

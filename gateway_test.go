@@ -16,6 +16,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/emiya-dev/musereel-sdk/jcs"
 )
 
 type gatewayTestTokenSource struct {
@@ -412,28 +414,396 @@ func TestGatewayRetryableTableAndWireMismatch(t *testing.T) {
 	}
 }
 
-func TestGatewayCreateRejectsNumericParametersAndShortKeys(t *testing.T) {
+// speechDecimalRequest 造一个 speech 请求，parameters 由调用方给。
+func speechRequestWithParameters(raw string) GatewayCreateRequest {
 	request := validGatewayCreateRequest()
-	request.Spec.Parameters = map[string]any{"duration": 5}
-	if err := request.Validate(); err == nil {
-		t.Fatal("numeric parameter was accepted")
-	}
-	request.Spec.Parameters = map[string]string{"duration": "5"}
-	if err := validateGatewayIdempotencyKey("short"); err == nil {
-		t.Fatal("short idempotency key was accepted")
+	request.SKU = "speech.generate.v1"
+	request.TaskRef = "speech-task-01"
+	request.Spec.Input = map[string]any{"text": "hello"}
+	request.Spec.Parameters = json.RawMessage(raw)
+	return request
+}
+
+// TestGatewayCreateAllowsIntegerNumericParameters 钉住「整数一律放行」。
+//
+// 中枢把 speech 的 pitch 声明为 integer、speed 与 vol 声明为 number
+// （querysurface/public_schema.go），它们本来就该以 JSON 数字发送——早先那版
+// 「拒绝 parameters 内任何 JSON 数字」把它们一起误杀了。
+func TestGatewayCreateAllowsIntegerNumericParameters(t *testing.T) {
+	request := speechRequestWithParameters(`{"voice_id":"x","pitch":0,"speed":1,"vol":2}`)
+	if err := request.Validate(); err != nil {
+		t.Fatalf("整数参数被拒了：%v", err)
 	}
 }
 
-// TestCreateRequestAlwaysSerializesModerationReceiptKey 钉的是「空收据必须仍然出现在线上」。
+// TestGatewayCreateRejectsUncanonicalizableNumbersEverywhere 是本关的主表。
 //
-// gateway 的 parseCreateBody 显式要求 moderation_receipt 这个**键存在**，缺键当场 400
-// （sluice backend/service/gateway/internal/httpapi/fingerprint.go:109-111）。而 moderation
-// SKU 自己必须传空串——中枢 e2e 传的也是空串。两条合起来的结果是：这个字段既不能省、
-// 又必须能为空，因此 json tag 绝不能加 omitempty。
+// 🔴 每一行都必须同时满足两件事：**被拒**，且**报错点名字段路径**。后者不是文风要求——
+// 这一关不拦的话，同样的输入在中枢那边的下场是（2026-08-19 在中枢仓逐行核过）：
+// 整份请求 body 进 `computeFingerprint`（gateway create.go:62）→ `instanceauth/jcs.go:31`
+// 的 CanonicalizeJSON 拒掉 → **create.go:62-65 丢掉 JCS 原文**，改写成
+// `invalid_invocation_request` + `fields=["request"]`，接入方拿到的报错既不知道是哪个字段、
+// 也不知道问题出在小数。中枢自己把这个退化形态写成过反例
+// （gateway 的 response_format_test.go:102-107：「不能退化为 fields=[request]」）。
+// ⇒ SDK 这一关是目前唯一能把它定位到字段的地方。
+func TestGatewayCreateRejectsUncanonicalizableNumbersEverywhere(t *testing.T) {
+	cases := []struct {
+		name       string
+		parameters string
+		wantPath   string
+		// wantDiagnosis 钉住**报错说对了原因**，不只是"拒了"。
+		// 消融实测：把小数分支关掉后 strconv.ParseInt("1.2") 一样会失败，于是同一条
+		// 输入落进"超出 int64 范围"那条错误路径——照样被拒、照样带字段路径，只有诊断
+		// 是错的。只断言"拒了 + 有路径"的话，这种退化对测试完全隐形。
+		wantDiagnosis string
+		// notDiagnosis 是它的反面：小数不能被说成 int64 越界。
+		notDiagnosis string
+	}{
+		{
+			// 早先那版白名单把 speech 整族当作"数字字段"整体放行，于是 1.2 在
+			// Validate 这关是绿的，真发请求时才在指纹那步炸——而那条测试只调
+			// Validate()，没走发送路径，所以它的绿证明不了"这个请求发得出去"。
+			name:          "speech speed 小数",
+			parameters:    `{"voice_id":"x","pitch":0,"speed":1.2,"vol":1.5}`,
+			wantPath:      "spec.parameters.speed",
+			wantDiagnosis: "cannot canonicalize",
+			notDiagnosis:  "int64 range",
+		},
+		{
+			// temperature 是 text 的**顶层** decimal_string 字段，早先那版白名单漏了它。
+			name:          "text temperature 小数",
+			parameters:    `{"temperature":0.7}`,
+			wantPath:      "spec.parameters.temperature",
+			wantDiagnosis: "cannot canonicalize",
+			notDiagnosis:  "int64 range",
+		},
+		{
+			// music 的 audio_setting.sample_rate / bitrate 是 decimal_string，但嵌套在
+			// audio_setting 里。早先那版的判定条件只认顶层键，**结构上**就够不到它们。
+			name:          "music audio_setting 嵌套小数",
+			parameters:    `{"audio_setting":{"sample_rate":44100.0,"format":"mp3"}}`,
+			wantPath:      "spec.parameters.audio_setting.sample_rate",
+			wantDiagnosis: "cannot canonicalize",
+			notDiagnosis:  "int64 range",
+		},
+		{
+			// 早先那版整个跳过 response_format，理由是"JSON Schema 的约束天然是数字"。
+			// 但中枢**明确拒绝**它里面的小数，还专门给了自诊断文案
+			// （gateway 侧：「schema 中的 JSON 数字不能使用小数或指数，请改用整数十进制」）。
+			// 跳过它等于让 SDK 放行一个中枢一定会拒的请求。
+			name:          "response_format 里的小数约束",
+			parameters:    `{"response_format":{"type":"json_schema","json_schema":{"name":"a","schema":{"properties":{"score":{"minimum":0.5}}}}}}`,
+			wantPath:      "spec.parameters.response_format.json_schema.schema.properties.score.minimum",
+			wantDiagnosis: "cannot canonicalize",
+			notDiagnosis:  "int64 range",
+		},
+		{
+			name:          "指数记法",
+			parameters:    `{"seconds":1e3}`,
+			wantPath:      "spec.parameters.seconds",
+			wantDiagnosis: "cannot canonicalize",
+			notDiagnosis:  "int64 range",
+		},
+		{
+			name:          "数组元素里的小数",
+			parameters:    `{"weights":[1,2.5]}`,
+			wantPath:      "spec.parameters.weights[1]",
+			wantDiagnosis: "cannot canonicalize",
+			notDiagnosis:  "int64 range",
+		},
+		{
+			// jcs 子集的第二条限制：整数也必须落在 int64 内。
+			name:          "超出 int64 的整数",
+			parameters:    `{"n":99999999999999999999}`,
+			wantPath:      "spec.parameters.n",
+			wantDiagnosis: "int64 range",
+		},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			err := speechRequestWithParameters(testCase.parameters).Validate()
+			if err == nil {
+				t.Fatalf("%s 必须被拒", testCase.parameters)
+			}
+			if !strings.Contains(err.Error(), testCase.wantPath) {
+				t.Fatalf("报错必须点名 %s，接入方才能自助定位；实际：%v", testCase.wantPath, err)
+			}
+			if !strings.Contains(err.Error(), testCase.wantDiagnosis) {
+				t.Fatalf("报错必须说对原因（含 %q）；实际：%v", testCase.wantDiagnosis, err)
+			}
+			if testCase.notDiagnosis != "" && strings.Contains(err.Error(), testCase.notDiagnosis) {
+				t.Fatalf("小数不能被诊断成 %q——那是另一条错误路径的文案；实际：%v",
+					testCase.notDiagnosis, err)
+			}
+		})
+	}
+}
+
+// TestGatewayCreateRejectsUncanonicalizableNumbersInInput 覆盖 spec.input 那一侧。
 //
-// 加了 omitempty 不会有任何编译错误或类型错误，只会让 moderation 的请求悄悄少一个键，
-// 而症状是七个 SKU 一起 400 —— 报错方向指向"请求结构错"，与真因"某人给一个字段加了
-// 一个看起来无害的 tag"相隔很远。所以这条必须是机器判据，不能只写注释。
+// assertion digest 规范化的是**整个请求体**，只查 parameters 会让 input 里的同类数值
+// 躲到 digest 那一步才炸——同一条规则在一半字段上执行、在另一半上不执行，是新的不一致。
+func TestGatewayCreateRejectsUncanonicalizableNumbersInInput(t *testing.T) {
+	request := validGatewayCreateRequest()
+	request.Spec.Input = json.RawMessage(`{"text":"hi","weight":0.8}`)
+	err := request.Validate()
+	if err == nil {
+		t.Fatal("spec.input 里的小数必须被拒")
+	}
+	if !strings.Contains(err.Error(), "spec.input.weight") {
+		t.Fatalf("报错必须点名 spec.input.weight：%v", err)
+	}
+}
+
+// TestGatewayCreateDefersSchemaTypingToTheGateway 钉住这一关**不冒充 schema 校验**。
+//
+// image_count 在中枢声明为 decimal_string，写成整数 4 是错的——但拒它需要一份逐 SKU
+// 请求 schema 的手抄本，而中枢那份按运营配置动态派生（publicParameterRule 会把任何配了
+// min/max 的 param_schema 字段渲染成 decimal_string）。抄不全就会静默漏字段，所以这里
+// 明确放手：整数形态交给中枢拒，它知道 const/min/max/enum，报错比 SDK 猜的准。
+//
+// ⚠ 这条测试红了不代表它坏了——它代表有人给 SDK 加回了字段级 schema 判断。
+// 先回答「这份清单靠什么跟上中枢的动态派生」，再决定要不要改断言。
+func TestGatewayCreateDefersSchemaTypingToTheGateway(t *testing.T) {
+	request := validGatewayCreateRequest()
+	request.SKU = "image.generate.v1"
+	request.TaskRef = "image-task-01"
+	request.Spec.Parameters = json.RawMessage(`{"image_count":4,"resolution":"512","quality":"q2"}`)
+	if err := request.Validate(); err != nil {
+		t.Fatalf("整数形态的 decimal_string 字段应当放行给中枢判：%v", err)
+	}
+
+	// 正确写法（十进制字符串）当然也放行——否则上面的绿只是"这个字段总是放行"。
+	request.Spec.Parameters = json.RawMessage(`{"image_count":"4","resolution":"512","quality":"q2"}`)
+	if err := request.Validate(); err != nil {
+		t.Fatalf("十进制字符串必须放行：%v", err)
+	}
+}
+
+// TestGatewayNumberRuleMatchesJCSSubset 是这一关的**跨仓漂移守卫**。
+//
+// 这一关的判据就是 jcs 本身（validateGatewayCanonicalizable 直接调 CanonicalizeJSON），
+// 所以这里断言的是「两边判定逐样本一致」——包括**非数字**的拒因。
+// 早先这里复刻了一份数字规则，样本也只覆盖数字形态，于是重复键这种 jcs 拒、复刻版放行的
+// 缝隙落在样本之外：`{"a":1,"a":2}` 在 encoding/json 里是末键静默覆盖，不报错。
+// 二次审查（composer 路）实测抓到，改判据后一并纳入。
+func TestGatewayNumberRuleMatchesJCSSubset(t *testing.T) {
+	samples := []string{
+		`{"a":1}`,
+		`{"a":0}`,
+		`{"a":-7}`,
+		`{"a":1.5}`,
+		`{"a":1e3}`,
+		`{"a":1E-3}`,
+		`{"a":99999999999999999999}`,
+		`{"a":{"b":[1,2]}}`,
+		`{"a":{"b":[1,2.5]}}`,
+		`{"a":"1.5"}`,
+		`{"a":true,"b":null,"c":"x"}`,
+		// 非数字拒因：判据换成 jcs 之后这些也必须一致。
+		`{"a":1,"a":2}`,
+		`{"a":{"b":1,"b":2}}`,
+		`{"a":[{"c":1,"c":2}]}`,
+		// 边界形态（二次审查 grok 路指出样本表疏漏，实现本来就等价，但没被钉住）。
+		`{"a":-0}`,
+		`{"a":1.0}`,
+		`{"a":-0.0}`,
+		`{"a":1E+2}`,
+		`{"a":0e0}`,
+		`{"a":9223372036854775807}`,
+		`{"a":-9223372036854775808}`,
+		`{"a":9223372036854775808}`,
+	}
+	for _, sample := range samples {
+		validateRejected := validateGatewayParameters([]byte(sample)) != nil
+		_, jcsErr := jcs.CanonicalizeJSON([]byte(sample))
+		jcsRejected := jcsErr != nil
+		if validateRejected != jcsRejected {
+			t.Errorf("判定与 jcs 子集不一致 %s：Validate 拒=%v，CanonicalizeJSON 拒=%v（%v）",
+				sample, validateRejected, jcsRejected, jcsErr)
+		}
+	}
+}
+
+// TestGatewayRejectsDuplicateKeys 钉住「判据是 jcs 本身，不是它的数字子集」。
+//
+// 重复键在 encoding/json 里是末键静默覆盖——任何基于 map 的复刻判据都看不见它，
+// 而 jcs 走 token 流硬拒。这条红了通常意味着有人把判据改回了自己实现的那份。
+func TestGatewayRejectsDuplicateKeys(t *testing.T) {
+	cases := map[string]string{
+		"spec.parameters": `{"a":1,"a":2}`,
+		"嵌套对象":            `{"outer":{"a":1,"a":2}}`,
+	}
+	for name, parameters := range cases {
+		t.Run(name, func(t *testing.T) {
+			err := speechRequestWithParameters(parameters).Validate()
+			if err == nil {
+				t.Fatalf("重复键必须被拒：%s", parameters)
+			}
+			// 定位不到具体字段是可以接受的（拒因不是数字），但必须说清是哪一段，
+			// 并透传 jcs 的原因——否则这条报错和中枢那个 fields=["request"] 一样没用。
+			if !strings.Contains(err.Error(), "spec.parameters") {
+				t.Fatalf("报错必须点明是 spec.parameters 那一段：%v", err)
+			}
+			if !strings.Contains(err.Error(), "duplicate key") {
+				t.Fatalf("报错必须透传 jcs 的原因，接入方才知道是重复键：%v", err)
+			}
+		})
+	}
+}
+
+// TestGatewayResponseFormatAdviceIsNotMisleading 钉住 response_format 子树的报错措辞。
+//
+// 那里面的数字是 **JSON Schema 关键字**（minimum、maxItems…），不是 SKU 的
+// decimal_string 参数。通用文案建议「decimal_string 字段传 JSON 字符串」，照做把
+// minimum 写成 "0.5" 会绕过这一关，但那已经不是合法的 JSON Schema——把人带沟里。
+// 二次审查（composer 路）提出，实测成立后分叉文案。
+func TestGatewayResponseFormatAdviceIsNotMisleading(t *testing.T) {
+	const parameters = `{"response_format":{"type":"json_schema","json_schema":{"name":"a","schema":{"properties":{"score":{"minimum":0.5}}}}}}`
+	err := speechRequestWithParameters(parameters).Validate()
+	if err == nil {
+		t.Fatal("response_format 里的小数必须被拒")
+	}
+	if !strings.Contains(err.Error(), "JSON Schema keyword") {
+		t.Fatalf("必须说明这是 JSON Schema 关键字，不能套用 decimal_string 那套建议：%v", err)
+	}
+	if strings.Contains(err.Error(), "decimal_string fields take a JSON string") {
+		t.Fatalf("不得对 JSON Schema 关键字建议加引号——那不是合法 JSON Schema：%v", err)
+	}
+}
+
+// TestGatewayAdviceNeverEchoesTheRejectedToken 钉住「建议必须可执行」。
+//
+// 早先文案用 %q 把被拒的 token 原文塞进建议，于是 1e3 被建议成 "1e3"、
+// 44100.0 被建议成 "44100.0"。中枢的 decimal_string 要的是**规范十进制形式**——
+// 判据是 strconv.FormatInt(parsed, 10) 与原文逐字相等（sluice 侧 video.go:591-593、
+// image_spec.go:106-108）——所以接入方照着改完会被换一种方式再拒一次。
+// 二次审查（grok 路）提出，实测成立。
+func TestGatewayAdviceNeverEchoesTheRejectedToken(t *testing.T) {
+	cases := []struct {
+		name       string
+		parameters string
+		token      string
+	}{
+		{"指数", `{"seconds":1e3}`, "1e3"},
+		{"小数", `{"image_count":4.0}`, "4.0"},
+		{"嵌套小数", `{"audio_setting":{"sample_rate":44100.0}}`, "44100.0"},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			err := speechRequestWithParameters(testCase.parameters).Validate()
+			if err == nil {
+				t.Fatalf("必须被拒：%s", testCase.parameters)
+			}
+			// 报错可以（也应该）**陈述**被拒的是哪个值，但不能把它包在引号里
+			// 当成"改成这个字符串"的建议。
+			// ⚠ 只检查**本用例自己**那个 token：文案里若带固定示例串，会与某个用例的
+			// token 撞车，那时红的是测试不是实现（初版就这么翻过一次，示例 "4.0"
+			// 撞上了小数用例）。⇒ 文案现在不带任何示例串。
+			if strings.Contains(err.Error(), `"`+testCase.token+`"`) {
+				t.Fatalf("建议里回填了被拒的原文 %q——照做仍会被中枢拒：%v", testCase.token, err)
+			}
+			if !strings.Contains(err.Error(), "canonical decimal form") {
+				t.Fatalf("建议必须点明要规范十进制形式：%v", err)
+			}
+		})
+	}
+}
+
+// TestGatewayNonNumberRejectionIsNotBlamedOnANumber 钉住「不许把别人的锅扣给数字」。
+//
+// `{"a":2,"a":1.5}` 的真实拒因是**重复键**（jcs 在解码第二个 value 之前就拒了）。
+// 而 decodeGatewayJSONValue 走 encoding/json 是末键覆盖，树里只剩 a:1.5——
+// 定位器若无条件运行，就会报「a 是小数」，接入方改完小数重复键还在，再失败一次。
+// 二次审查（composer 路第二轮）实测到，处置是只在 jcs 确实因数字而拒时才定位。
+func TestGatewayNonNumberRejectionIsNotBlamedOnANumber(t *testing.T) {
+	// ⚠ 拒因取决于 **jcs token 流的顺序**，不是"这段 JSON 里有什么"：
+	// `{"a":2,"a":1.5}` 读到第二个键就发现重复，小数还没被解析 ⇒ 拒因是重复键；
+	// `{"a":1.5,"a":2}` 小数先被读到 ⇒ 拒因是数字。两者预期不同，别写成同一条。
+	// 初版把后者也预期成重复键，红的是测试不是实现。
+	cases := []struct {
+		name       string
+		parameters string
+		wantReason string
+	}{
+		{"重复键先于小数被读到", `{"a":2,"a":1.5}`, "duplicate key"},
+		{"嵌套重复键", `{"outer":{"a":2,"a":1.5}}`, "duplicate key"},
+		{"小数先于重复键被读到", `{"a":1.5,"a":2}`, "json number must be integer decimal string form"},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			err := speechRequestWithParameters(testCase.parameters).Validate()
+			if err == nil {
+				t.Fatalf("必须被拒：%s", testCase.parameters)
+			}
+			if !strings.Contains(err.Error(), testCase.wantReason) {
+				t.Fatalf("必须报 jcs 的真实拒因 %q：%v", testCase.wantReason, err)
+			}
+			// 关键断言：不得把非数字拒因说成「这个小数不能规范化」。
+			// 末键覆盖会让树里只剩合法值或只剩非法值，定位器无条件运行就会张冠李戴。
+			if testCase.wantReason == "duplicate key" &&
+				strings.Contains(err.Error(), "cannot canonicalize: request fingerprints") {
+				t.Fatalf("不得把重复键报成小数问题——改完小数还会再失败一次：%v", err)
+			}
+		})
+	}
+}
+
+// TestGatewayNumberRejectionStringsStillMatchJCS 钉住 isJCSNumberRejection 认的两条串。
+//
+// 它靠字符串匹配识别 jcs 的数字拒因（中枢也是这么做的）。串一变，
+// 「拒因是数字」就会被判成 false，于是所有小数错误退化成没有字段路径的兜底报错——
+// 请求照样被拒，报错质量却悄悄掉一档。这条测试让那种退化当场可见。
+func TestGatewayNumberRejectionStringsStillMatchJCS(t *testing.T) {
+	if _, err := jcs.CanonicalizeJSON([]byte(`{"a":1.5}`)); err == nil {
+		t.Fatal("jcs 必须拒小数")
+	} else if !isJCSNumberRejection(err) {
+		t.Fatalf("小数拒因没被识别成数字类，字符串对不上了：%v", err)
+	}
+	if _, err := jcs.CanonicalizeJSON([]byte(`{"a":99999999999999999999}`)); err == nil {
+		t.Fatal("jcs 必须拒超出 int64 的整数")
+	} else if !isJCSNumberRejection(err) {
+		t.Fatalf("int64 越界拒因没被识别成数字类，字符串对不上了：%v", err)
+	}
+	// 负对照：非数字拒因不得被认成数字类，否则第一条守卫失去意义。
+	if _, err := jcs.CanonicalizeJSON([]byte(`{"a":1,"a":2}`)); err == nil {
+		t.Fatal("jcs 必须拒重复键")
+	} else if isJCSNumberRejection(err) {
+		t.Fatalf("重复键被误认成数字拒因：%v", err)
+	}
+}
+
+// TestGatewayNumberErrorIsDeterministic 钉住报错的确定性。
+//
+// Go 的 map 迭代顺序是随机的。含两个坏字段的请求如果不排序遍历，报哪一个每次都可能不同——
+// 对接方看到飘忽的报错，测试也会间歇性红。
+func TestGatewayNumberErrorIsDeterministic(t *testing.T) {
+	const parameters = `{"zulu":1.5,"alpha":2.5,"mike":3.5}`
+	first := validateGatewayParameters([]byte(parameters))
+	if first == nil {
+		t.Fatal("多个坏字段必须被拒")
+	}
+	for attempt := 0; attempt < 50; attempt++ {
+		again := validateGatewayParameters([]byte(parameters))
+		if again == nil || again.Error() != first.Error() {
+			t.Fatalf("第 %d 次报错与首次不同：%v vs %v", attempt, again, first)
+		}
+	}
+	// 排序遍历 ⇒ 报的是字典序最小的那个字段。
+	if !strings.Contains(first.Error(), "spec.parameters.alpha") {
+		t.Fatalf("确定性报错应点名字典序最小的 alpha：%v", first)
+	}
+}
+
+func TestGatewayCreateRejectsShortIdempotencyKey(t *testing.T) {
+	if err := validateGatewayIdempotencyKey("short"); err == nil {
+		t.Fatal("short idempotency key was accepted")
+	}
+	if err := validateGatewayIdempotencyKey("this-is-a-valid-idempotency-key"); err != nil {
+		t.Fatalf("valid idempotency key rejected: %v", err)
+	}
+}
+
 func TestCreateRequestAlwaysSerializesModerationReceiptKey(t *testing.T) {
 	encoded, err := json.Marshal(GatewayCreateRequest{
 		SKU:               "moderation.generate.v1",
