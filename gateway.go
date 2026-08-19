@@ -54,7 +54,8 @@ type GatewayIdentity struct {
 }
 
 // GatewayInvocationSpec 是冻结的 spec 对象。Input 和 Parameters 使用 interface，
-// 调用方可传 json.RawMessage 或普通 Go JSON 值；Validate 会拒绝 Parameters 内的 JSON 数值。
+// 调用方可传 json.RawMessage 或普通 Go JSON 值；Validate 只会拒绝已知
+// decimal_string 参数字段中的 JSON 数值。
 type GatewayInvocationSpec struct {
 	SchemaVersion string `json:"schema_version"`
 	Input         any    `json:"input"`
@@ -711,29 +712,84 @@ func validateGatewayParameters(raw []byte) error {
 		return fmt.Errorf("spec.parameters must be a JSON object")
 	}
 	if gatewayJSONContainsNumber(value) {
-		return fmt.Errorf("spec.parameters numeric values must be decimal strings")
+		fieldPath := gatewayJSONDecimalStringNumberPath(value)
+		return fmt.Errorf("%s must be a decimal string (JSON string), got a JSON number", fieldPath)
 	}
 	return nil
 }
 
+// gatewayJSONContainsNumber reports whether a JSON number occurs in a field
+// whose public request schema declares decimal_string. It deliberately does
+// not mean "there is any number anywhere in parameters": speech's pitch,
+// speed, and vol are number/integer fields, and response_format contains an
+// opaque JSON Schema document whose constraints are naturally numeric.
 func gatewayJSONContainsNumber(value any) bool {
+	return gatewayJSONDecimalStringNumberPath(value) != ""
+}
+
+// gatewayJSONDecimalStringNumberPath returns the first offending parameter
+// path, or the empty string when all numbers are in fields that the SDK must
+// pass through. The current public request schema identifies image_count as a
+// top-level decimal_string field; keep this list narrow because this SDK does
+// not own or interpret the full per-SKU request schema. If the gateway adds a
+// number-typed parameter, no SDK change is needed. If it adds another
+// decimal_string parameter, add that schema-declared field here in the same
+// contract update. response_format is opaque by contract and is never walked.
+func gatewayJSONDecimalStringNumberPath(value any) string {
+	return gatewayJSONDecimalStringNumberPathAt(value, "spec.parameters", false)
+}
+
+// gatewayDecimalStringParameters is the full set of top-level spec.parameters
+// fields that the gateway's public request schema declares as decimal_string.
+//
+// It was enumerated field-by-field from the gateway's own frozen request-schema
+// goldens (2026-08-19), not guessed from field names:
+//
+//	image_v1     -> parameters.image_count
+//	video_v3, v4 -> parameters.seconds
+//
+// Everything not in this set is passed through: speech's pitch/speed/vol are
+// declared integer/number, and response_format carries an opaque JSON Schema
+// document whose constraint keywords are naturally numeric.
+//
+// ⚠ Keep this set in sync with the gateway goldens. Adding a number-typed
+// parameter upstream needs no change here; adding another decimal_string
+// parameter does, and missing it means this SDK silently stops rejecting a
+// field the gateway will reject later with a less actionable message.
+var gatewayDecimalStringParameters = map[string]bool{
+	"image_count": true,
+	"seconds":     true,
+}
+
+func gatewayJSONDecimalStringNumberPathAt(value any, path string, decimalStringField bool) string {
 	switch current := value.(type) {
 	case json.Number:
-		return true
+		if decimalStringField {
+			return path
+		}
 	case []any:
-		for _, item := range current {
-			if gatewayJSONContainsNumber(item) {
-				return true
+		for index, item := range current {
+			itemPath := fmt.Sprintf("%s[%d]", path, index)
+			if fieldPath := gatewayJSONDecimalStringNumberPathAt(item, itemPath, decimalStringField); fieldPath != "" {
+				return fieldPath
 			}
 		}
 	case map[string]any:
-		for _, item := range current {
-			if gatewayJSONContainsNumber(item) {
-				return true
+		for key, item := range current {
+			// response_format.json_schema.schema is an opaque document. Its
+			// numeric JSON Schema keywords are not gateway ledger quantities.
+			if key == "response_format" {
+				continue
+			}
+			itemPath := path + "." + key
+			itemIsDecimalString := decimalStringField ||
+				(path == "spec.parameters" && gatewayDecimalStringParameters[key])
+			if fieldPath := gatewayJSONDecimalStringNumberPathAt(item, itemPath, itemIsDecimalString); fieldPath != "" {
+				return fieldPath
 			}
 		}
 	}
-	return false
+	return ""
 }
 
 func gatewayJSONNull(raw []byte) bool { return bytes.Equal(bytes.TrimSpace(raw), []byte("null")) }
