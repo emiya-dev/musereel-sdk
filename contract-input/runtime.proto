@@ -380,4 +380,9 @@ message QualityTier {
   // 因而它不表示所有调用必然落到的模型。BYOK customer binding 使用客户自带合同的费率，
   // 不在 route_policy_entry 约束内（BE-171 B6）；此字段只表达平台供给语义。
   string vendor_model = 3;
+  // dispatchable 表示该档位全部平台 fallback 费率都能过调度闸（AND 投影）；与 vendor_model 同为
+  // 平台供给口径。BYOK 客户费率、authorization_scope 过滤与 adapter/凭据/熔断等其它闸都不在
+  // 这个布尔里，因此 true 不保证某个具体调用方一定能下单，false 也不等于运行期必拒。
+  // 只暴露布尔事实，不暴露成本口径或拒绝原因。
+  bool dispatchable = 4;
 }
