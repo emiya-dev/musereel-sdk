@@ -451,52 +451,72 @@ func TestGatewayCreateRejectsUncanonicalizableNumbersEverywhere(t *testing.T) {
 		name       string
 		parameters string
 		wantPath   string
+		// wantDiagnosis 钉住**报错说对了原因**，不只是"拒了"。
+		// 消融实测：把小数分支关掉后 strconv.ParseInt("1.2") 一样会失败，于是同一条
+		// 输入落进"超出 int64 范围"那条错误路径——照样被拒、照样带字段路径，只有诊断
+		// 是错的。只断言"拒了 + 有路径"的话，这种退化对测试完全隐形。
+		wantDiagnosis string
+		// notDiagnosis 是它的反面：小数不能被说成 int64 越界。
+		notDiagnosis string
 	}{
 		{
 			// 早先那版白名单把 speech 整族当作"数字字段"整体放行，于是 1.2 在
 			// Validate 这关是绿的，真发请求时才在指纹那步炸——而那条测试只调
 			// Validate()，没走发送路径，所以它的绿证明不了"这个请求发得出去"。
-			name:       "speech speed 小数",
-			parameters: `{"voice_id":"x","pitch":0,"speed":1.2,"vol":1.5}`,
-			wantPath:   "spec.parameters.speed",
+			name:          "speech speed 小数",
+			parameters:    `{"voice_id":"x","pitch":0,"speed":1.2,"vol":1.5}`,
+			wantPath:      "spec.parameters.speed",
+			wantDiagnosis: "cannot canonicalize",
+			notDiagnosis:  "int64 range",
 		},
 		{
 			// temperature 是 text 的**顶层** decimal_string 字段，早先那版白名单漏了它。
-			name:       "text temperature 小数",
-			parameters: `{"temperature":0.7}`,
-			wantPath:   "spec.parameters.temperature",
+			name:          "text temperature 小数",
+			parameters:    `{"temperature":0.7}`,
+			wantPath:      "spec.parameters.temperature",
+			wantDiagnosis: "cannot canonicalize",
+			notDiagnosis:  "int64 range",
 		},
 		{
 			// music 的 audio_setting.sample_rate / bitrate 是 decimal_string，但嵌套在
 			// audio_setting 里。早先那版的判定条件只认顶层键，**结构上**就够不到它们。
-			name:       "music audio_setting 嵌套小数",
-			parameters: `{"audio_setting":{"sample_rate":44100.0,"format":"mp3"}}`,
-			wantPath:   "spec.parameters.audio_setting.sample_rate",
+			name:          "music audio_setting 嵌套小数",
+			parameters:    `{"audio_setting":{"sample_rate":44100.0,"format":"mp3"}}`,
+			wantPath:      "spec.parameters.audio_setting.sample_rate",
+			wantDiagnosis: "cannot canonicalize",
+			notDiagnosis:  "int64 range",
 		},
 		{
 			// 早先那版整个跳过 response_format，理由是"JSON Schema 的约束天然是数字"。
 			// 但中枢**明确拒绝**它里面的小数，还专门给了自诊断文案
 			// （gateway 侧：「schema 中的 JSON 数字不能使用小数或指数，请改用整数十进制」）。
 			// 跳过它等于让 SDK 放行一个中枢一定会拒的请求。
-			name:       "response_format 里的小数约束",
-			parameters: `{"response_format":{"type":"json_schema","json_schema":{"name":"a","schema":{"properties":{"score":{"minimum":0.5}}}}}}`,
-			wantPath:   "spec.parameters.response_format.json_schema.schema.properties.score.minimum",
+			name:          "response_format 里的小数约束",
+			parameters:    `{"response_format":{"type":"json_schema","json_schema":{"name":"a","schema":{"properties":{"score":{"minimum":0.5}}}}}}`,
+			wantPath:      "spec.parameters.response_format.json_schema.schema.properties.score.minimum",
+			wantDiagnosis: "cannot canonicalize",
+			notDiagnosis:  "int64 range",
 		},
 		{
-			name:       "指数记法",
-			parameters: `{"seconds":1e3}`,
-			wantPath:   "spec.parameters.seconds",
+			name:          "指数记法",
+			parameters:    `{"seconds":1e3}`,
+			wantPath:      "spec.parameters.seconds",
+			wantDiagnosis: "cannot canonicalize",
+			notDiagnosis:  "int64 range",
 		},
 		{
-			name:       "数组元素里的小数",
-			parameters: `{"weights":[1,2.5]}`,
-			wantPath:   "spec.parameters.weights[1]",
+			name:          "数组元素里的小数",
+			parameters:    `{"weights":[1,2.5]}`,
+			wantPath:      "spec.parameters.weights[1]",
+			wantDiagnosis: "cannot canonicalize",
+			notDiagnosis:  "int64 range",
 		},
 		{
 			// jcs 子集的第二条限制：整数也必须落在 int64 内。
-			name:       "超出 int64 的整数",
-			parameters: `{"n":99999999999999999999}`,
-			wantPath:   "spec.parameters.n",
+			name:          "超出 int64 的整数",
+			parameters:    `{"n":99999999999999999999}`,
+			wantPath:      "spec.parameters.n",
+			wantDiagnosis: "int64 range",
 		},
 	}
 	for _, testCase := range cases {
@@ -507,6 +527,13 @@ func TestGatewayCreateRejectsUncanonicalizableNumbersEverywhere(t *testing.T) {
 			}
 			if !strings.Contains(err.Error(), testCase.wantPath) {
 				t.Fatalf("报错必须点名 %s，接入方才能自助定位；实际：%v", testCase.wantPath, err)
+			}
+			if !strings.Contains(err.Error(), testCase.wantDiagnosis) {
+				t.Fatalf("报错必须说对原因（含 %q）；实际：%v", testCase.wantDiagnosis, err)
+			}
+			if testCase.notDiagnosis != "" && strings.Contains(err.Error(), testCase.notDiagnosis) {
+				t.Fatalf("小数不能被诊断成 %q——那是另一条错误路径的文案；实际：%v",
+					testCase.notDiagnosis, err)
 			}
 		})
 	}
