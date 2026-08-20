@@ -598,15 +598,15 @@ func TestRuntimeClientRoutesEveryGeneratedRPCMethod(t *testing.T) {
 			return err
 		},
 		func() error {
-			_, err := client.SyncIdentity(context.Background(), &runtimepb.SyncIdentityRequest{EventId: validEvent})
+			_, err := client.SyncIdentity(context.Background(), &runtimepb.SyncIdentityRequest{EventId: validEvent, Actor: "actor-01"})
 			return err
 		},
 		func() error {
-			_, err := client.SyncVerificationStatus(context.Background(), &runtimepb.SyncVerificationStatusRequest{EventId: validEvent + "-v", CredentialRef: "credential", Issuer: "issuer"})
+			_, err := client.SyncVerificationStatus(context.Background(), &runtimepb.SyncVerificationStatusRequest{EventId: validEvent + "-v", Actor: "actor-01", CredentialRef: "credential", Issuer: "issuer"})
 			return err
 		},
 		func() error {
-			_, err := client.DisableIdentity(context.Background(), &runtimepb.DisableIdentityRequest{EventId: validEvent + "-d"})
+			_, err := client.DisableIdentity(context.Background(), &runtimepb.DisableIdentityRequest{EventId: validEvent + "-d", Actor: "actor-01"})
 			return err
 		},
 		func() error {
@@ -653,24 +653,89 @@ func TestRuntimeClientRoutesEveryGeneratedRPCMethod(t *testing.T) {
 }
 
 func TestRuntimeClientValidationNegativeControls(t *testing.T) {
-	client := NewRuntimeClient(nil, nil)
-	if _, err := client.SyncIdentity(context.Background(), &runtimepb.SyncIdentityRequest{EventId: "too-short"}); err == nil {
-		t.Fatal("invalid event_id was accepted")
+	// ⚠ 这里**必须**用一个能正常应答的 connection，不能用 NewRuntimeClient(nil, nil)。
+	// 原先用的是 nil connection：那样合法请求也会因为 connection 为空而报错，
+	// 于是 `err == nil` 这个断言永远不成立——把 validateEventID /
+	// validateCredentialRef / validateIssuer / validateActor 四个校验函数
+	// 全部改成 `return nil`，整个测试照样绿（2026-08-20 实测）。
+	// 一个名字里带 NegativeControls、却什么都不守的测试，比没有这条测试更糟：
+	// 它让人以为字段校验有守卫。
+	//
+	// 现在的形态是：正控先证明「这个 conn 上合法请求确实能过」，
+	// 负控才证明「非法字段确实被本地拒住」。缺了正控那一半，负控随时会退化回空断言。
+	connection := &runtimeRoutingConn{}
+	now := time.Unix(1_800_000_000, 0)
+	tokens := NewGRPCTokenSource(connection, WithClock(func() time.Time { return now }))
+	// ListLedger / GetBalance 走 actor assertion，缺 signer 会在字段校验之后被拒——
+	// 正控第三条就是这么抓出来的，别把它换成不带 assertion 的 RPC。
+	client := NewRuntimeClient(connection, tokens,
+		WithRuntimeAssertion(runtimeAssertionSigner(t), "instance-01", "tenant-01", "session-01"))
+
+	// 正控：合法字段必须通过，否则下面每条负控都会因为别的原因变绿。
+	if _, err := client.SyncIdentity(context.Background(), &runtimepb.SyncIdentityRequest{
+		EventId: "event-positive-01", Actor: "actor-01",
+	}); err != nil {
+		t.Fatalf("正控失败——合法 SyncIdentity 被拒，负控全部失去意义: %v", err)
 	}
-	if _, err := client.SyncIdentity(context.Background(), &runtimepb.SyncIdentityRequest{EventId: "event-invalid-01!"}); err == nil {
-		t.Fatal("event_id with invalid character was accepted")
+	if _, err := client.SyncVerificationStatus(context.Background(), &runtimepb.SyncVerificationStatusRequest{
+		EventId: "event-positive-02", Actor: "actor-01", CredentialRef: "credential", Issuer: "issuer",
+	}); err != nil {
+		t.Fatalf("正控失败——合法 SyncVerificationStatus 被拒: %v", err)
 	}
-	if _, err := client.ListLedger(context.Background(), &runtimepb.ListLedgerRequest{PageSize: 101}); err == nil {
-		t.Fatal("page_size > 100 was accepted")
+	if _, err := client.ListLedger(context.Background(), &runtimepb.ListLedgerRequest{
+		Actor: "actor-01", PageSize: 100,
+	}); err != nil {
+		t.Fatalf("正控失败——合法 ListLedger 被拒: %v", err)
 	}
-	if _, err := client.ListLedger(context.Background(), &runtimepb.ListLedgerRequest{PageSize: -1}); err == nil {
-		t.Fatal("negative page_size was accepted")
-	}
-	if _, err := client.SyncVerificationStatus(context.Background(), &runtimepb.SyncVerificationStatusRequest{EventId: "event-credential-01", CredentialRef: "credential ref", Issuer: "issuer"}); err == nil {
-		t.Fatal("credential_ref containing whitespace was accepted")
-	}
-	if _, err := client.SyncVerificationStatus(context.Background(), &runtimepb.SyncVerificationStatusRequest{EventId: "event-credential-02", CredentialRef: "credential", Issuer: "Issuer"}); err == nil {
-		t.Fatal("issuer outside frozen lowercase form was accepted")
+
+	for _, testCase := range []struct {
+		name string
+		call func() error
+	}{
+		{"event_id 过短", func() error {
+			_, err := client.SyncIdentity(context.Background(), &runtimepb.SyncIdentityRequest{EventId: "too-short", Actor: "actor-01"})
+			return err
+		}},
+		{"event_id 含非法字符", func() error {
+			_, err := client.SyncIdentity(context.Background(), &runtimepb.SyncIdentityRequest{EventId: "event-invalid-01!", Actor: "actor-01"})
+			return err
+		}},
+		{"page_size 超过 100", func() error {
+			_, err := client.ListLedger(context.Background(), &runtimepb.ListLedgerRequest{Actor: "actor-01", PageSize: 101})
+			return err
+		}},
+		{"page_size 为负", func() error {
+			_, err := client.ListLedger(context.Background(), &runtimepb.ListLedgerRequest{Actor: "actor-01", PageSize: -1})
+			return err
+		}},
+		{"credential_ref 含空白", func() error {
+			_, err := client.SyncVerificationStatus(context.Background(), &runtimepb.SyncVerificationStatusRequest{EventId: "event-credential-01", Actor: "actor-01", CredentialRef: "credential ref", Issuer: "issuer"})
+			return err
+		}},
+		{"issuer 不是冻结的小写形态", func() error {
+			_, err := client.SyncVerificationStatus(context.Background(), &runtimepb.SyncVerificationStatusRequest{EventId: "event-credential-02", Actor: "actor-01", CredentialRef: "credential", Issuer: "Issuer"})
+			return err
+		}},
+		// 06:220-222 用同一句给这三个 identity RPC 定 event_id 与 actor 两条制式，
+		// 表里三者都有 actor 字段。SDK 一直只校验了 event_id 那半句。
+		{"SyncIdentity 的 actor 首尾有空白", func() error {
+			_, err := client.SyncIdentity(context.Background(), &runtimepb.SyncIdentityRequest{EventId: "event-actor-01", Actor: " actor"})
+			return err
+		}},
+		{"SyncVerificationStatus 的 actor 含控制字符", func() error {
+			_, err := client.SyncVerificationStatus(context.Background(), &runtimepb.SyncVerificationStatusRequest{EventId: "event-actor-02", Actor: "act\x00or", CredentialRef: "credential", Issuer: "issuer"})
+			return err
+		}},
+		{"DisableIdentity 的 actor 为空", func() error {
+			_, err := client.DisableIdentity(context.Background(), &runtimepb.DisableIdentityRequest{EventId: "event-actor-03", Actor: ""})
+			return err
+		}},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			if err := testCase.call(); err == nil {
+				t.Fatal("非法字段被接受了")
+			}
+		})
 	}
 }
 

@@ -311,6 +311,9 @@ func (client *RuntimeClient) SyncIdentity(ctx context.Context, request *runtimep
 	if err := validateEventID(request.GetEventId()); err != nil {
 		return nil, err
 	}
+	if err := validateActor(request.GetActor()); err != nil {
+		return nil, err
+	}
 	reply := new(runtimepb.IdentityReply)
 	if err := client.invokeAuthenticated(ctx, runtimepb.RuntimeService_SyncIdentity_FullMethodName, request, reply, options...); err != nil {
 		return nil, err
@@ -326,6 +329,9 @@ func (client *RuntimeClient) SyncVerificationStatus(ctx context.Context, request
 		return nil, fmt.Errorf("sync verification status request is nil")
 	}
 	if err := validateEventID(request.GetEventId()); err != nil {
+		return nil, err
+	}
+	if err := validateActor(request.GetActor()); err != nil {
 		return nil, err
 	}
 	if err := validateCredentialRef(request.GetCredentialRef()); err != nil {
@@ -347,6 +353,9 @@ func (client *RuntimeClient) DisableIdentity(ctx context.Context, request *runti
 		return nil, fmt.Errorf("disable identity request is nil")
 	}
 	if err := validateEventID(request.GetEventId()); err != nil {
+		return nil, err
+	}
+	if err := validateActor(request.GetActor()); err != nil {
 		return nil, err
 	}
 	reply := new(runtimepb.IdentityReply)
