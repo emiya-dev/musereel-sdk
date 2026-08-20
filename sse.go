@@ -12,8 +12,8 @@ import (
 	"unicode/utf8"
 )
 
-// GatewaySSEEvent 是一个经过校验的业务事件。Payload 保持 raw JSON，流式结果和 units
-// 不会被重新类型化。
+// GatewaySSEEvent is a validated business event. Payload remains raw JSON; the
+// SDK does not retype streaming results or units.
 type GatewaySSEEvent struct {
 	ID           string
 	Event        string
@@ -24,8 +24,9 @@ type GatewaySSEEvent struct {
 	Payload      json.RawMessage
 }
 
-// GatewaySSEStream 解析一个 text/event-stream 响应。终态事件前断线会返回
-// GatewaySSEDisconnectError，绝不会转换成取消请求。
+// GatewaySSEStream parses a text/event-stream response. A disconnect before a
+// terminal event returns GatewaySSEDisconnectError and is never converted into
+// a cancellation request.
 type GatewaySSEStream struct {
 	body   io.ReadCloser
 	reader *bufio.Reader
@@ -48,21 +49,26 @@ type GatewaySSEStream struct {
 	closeOnce    sync.Once
 }
 
-// GatewaySSEDisconnectError 表示 HTTP 流在终态事件前结束；调用方应使用 GatewayPoller/Get
-// 恢复 invocation。
+// GatewaySSEDisconnectError indicates that the HTTP stream ended before a
+// terminal event. Callers should resume the invocation with GatewayPoller or
+// Get.
 type GatewaySSEDisconnectError struct{}
 
+// Error returns the stable message used for a pre-terminal SSE disconnect.
 func (GatewaySSEDisconnectError) Error() string {
 	return "gateway SSE disconnected before a terminal event"
 }
 
+// Unwrap reports io.ErrUnexpectedEOF so callers can classify the disconnect
+// with errors.Is.
 func (GatewaySSEDisconnectError) Unwrap() error { return io.ErrUnexpectedEOF }
 
 func newGatewaySSEStream(body io.ReadCloser) *GatewaySSEStream {
 	return &GatewaySSEStream{body: body, reader: bufio.NewReader(body)}
 }
 
-// Next 返回下一个业务事件，跳过 : keep-alive 等注释和未知 SSE 字段；终态后的正常 EOF 为 io.EOF。
+// Next returns the next business event. It skips comments such as : keep-alive
+// and unknown SSE fields; a normal EOF after a terminal event is io.EOF.
 func (stream *GatewaySSEStream) Next() (GatewaySSEEvent, error) {
 	if stream == nil || stream.body == nil {
 		return GatewaySSEEvent{}, io.ErrClosedPipe
@@ -114,7 +120,7 @@ func (stream *GatewaySSEStream) Next() (GatewaySSEEvent, error) {
 	}
 }
 
-// Close 释放底层 HTTP 响应 body。
+// Close releases the underlying HTTP response body.
 func (stream *GatewaySSEStream) Close() error {
 	if stream == nil || stream.body == nil {
 		return nil
@@ -126,7 +132,7 @@ func (stream *GatewaySSEStream) Close() error {
 	return nil
 }
 
-// Terminal 报告是否已观察到终态或 pending 事件。
+// Terminal reports whether a terminal or pending event has been observed.
 func (stream *GatewaySSEStream) Terminal() bool {
 	if stream == nil {
 		return false
@@ -136,7 +142,8 @@ func (stream *GatewaySSEStream) Terminal() bool {
 	return stream.terminal
 }
 
-// Pending 报告终态事件是否为 invocation.pending；此时调用方应切换到 GET 轮询。
+// Pending reports whether the terminal event was invocation.pending. In that
+// case, callers should switch to GET polling.
 func (stream *GatewaySSEStream) Pending() bool {
 	if stream == nil {
 		return false

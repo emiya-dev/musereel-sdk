@@ -7,7 +7,8 @@ import (
 	"strconv"
 )
 
-// Gateway 错误码是 HTTP SDK 唯一用于分支判断的稳定值，人类可读消息只作诊断。
+// Gateway error codes are the HTTP SDK's only stable values for branching;
+// human-readable messages are for diagnostics only.
 const (
 	GatewayInvalidInvocationRequest       = "invalid_invocation_request"
 	GatewayModerationInvalidRequest       = "moderation_invalid_request"
@@ -30,24 +31,30 @@ const (
 	GatewayInternalError                  = "internal_error"
 )
 
-// GatewayError 是 Gateway HTTP 返回的稳定错误形状。Retryable 保留 wire 原值供诊断；
-// SDK 自造的错误则以冻结码表的判定作为缺省值。
+// GatewayError is the stable shape of a Gateway HTTP error. Retryable
+// preserves the wire value for diagnostics; SDK-created errors use the frozen
+// code table as their default.
 //
-// 🔴 重试判断请调用 RetryableByCode 或 IsRetryable，**不要**直接调
-// RetryableGatewayCode。两者曾经等价，现在不是了：RetryableGatewayCode 只吃一个
-// code 字符串，拿不到这次响应的 retryable 值，因此对 internal_error 恒返回 true。
-// 而 06:611-619 说 internal_error 的 retryable **不是常量**——确定性的部署配置失败
-// 会以 internal_error + retryable=false 出现，调用方必须停止重试。
-// 只有 RetryableByCode / IsRetryable 看得见 wire 值。
-// RetryableGatewayCode 保留下来是给「手里只有一个 code 字符串」的场景当保守缺省用的。
+// Call RetryableByCode or IsRetryable for retry decisions; do not call
+// RetryableGatewayCode directly when you have a GatewayError. The two once
+// happened to be equivalent, but they are not now: RetryableGatewayCode takes
+// only a code string and cannot see this response's retryable value, so it
+// always returns true for internal_error. The contract (06:611-619) says the
+// retryable value of internal_error is not a constant: a deterministic
+// deployment-configuration failure arrives as internal_error with
+// retryable=false, and the caller must stop retrying. Only RetryableByCode and
+// IsRetryable can see the wire value. RetryableGatewayCode remains for the
+// conservative default when the caller has only a code string.
 type GatewayError struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
 
-	// Retryable 是 **wire 原值的直读**，仅供诊断，**不要拿它做重试判断**。
-	// 🔴 服务端**省略** retryable 字段时这里是 `false`，而契约对未登记内部码的保守缺省是
-	// `true`（06:611-619）——也就是说这一个格子会给出与判定方法**相反**的答案。
-	// 判定一律用 RetryableByCode / IsRetryable：只有它们看得见"wire 到底带没带这个字段"。
+	// Retryable is a direct read of the wire value for diagnostics; do not use it
+	// to decide whether to retry. When the server omits retryable, this field is
+	// false, while the contract's conservative default for an unregistered
+	// internal code is true (06:611-619). This one field therefore gives the
+	// opposite answer to the effective decision. Always use RetryableByCode or
+	// IsRetryable: only they can see whether the wire carried the field at all.
 	Retryable    bool           `json:"retryable"`
 	RetryAfterMS *int64         `json:"retry_after_ms"`
 	Details      map[string]any `json:"details"`
@@ -59,7 +66,8 @@ type GatewayError struct {
 	retryableFromWire bool
 }
 
-// Error 故意不包含 Message，避免服务端诊断文本意外带入 token 或 assertion 全文。
+// Error intentionally omits Message so that server diagnostic text cannot
+// accidentally carry a full token or assertion into an error string.
 func (err GatewayError) Error() string {
 	code := err.Code
 	if code == "" {
@@ -71,13 +79,15 @@ func (err GatewayError) Error() string {
 	return "gateway error " + code
 }
 
-// ErrorCode 对齐既有 SDK 错误面的 ErrorCodeProvider。
+// ErrorCode implements the SDK's ErrorCodeProvider error shape.
 func (err GatewayError) ErrorCode() string { return err.Code }
 
-// RetryableGatewayCode 返回冻结码表的 retryable 缺省判定。
+// RetryableGatewayCode returns the frozen code table's default retryability
+// decision.
 //
-// ⚠ 它看不到本次响应的 wire retryable，所以对 internal_error 恒为 true。
-// 拿得到 *GatewayError 时一律用 RetryableByCode，别用这个——见 GatewayError 的说明。
+// It cannot see this response's wire retryable value, so it always returns true
+// for internal_error. When a *GatewayError is available, use RetryableByCode
+// instead; see GatewayError for the distinction.
 func RetryableGatewayCode(code string) bool {
 	switch code {
 	case GatewayRateLimited, GatewayUpstreamUnavailable, GatewayInternalError:
@@ -104,8 +114,10 @@ func RetryableGatewayCode(code string) bool {
 	}
 }
 
-// RetryableByCode 返回 invocation 错误的有效 retryable 判定；服务端值矛盾时不改写
-// GatewayError.Retryable 原字段。HTTP wire 的 internal_error 例外地使用服务端显式值。
+// RetryableByCode returns the effective retryability decision for an invocation
+// error without changing the GatewayError.Retryable field. For an internal_error
+// received over HTTP, an explicit server value is used instead of the code-table
+// default.
 func (err GatewayError) RetryableByCode() bool {
 	if err.Code == GatewayInternalError && err.retryableFromWire {
 		return err.Retryable
@@ -122,7 +134,7 @@ func (err GatewayError) RetryableByCode() bool {
 	return RetryableGatewayCode(err.Code)
 }
 
-// IsRetryable 是 RetryableByCode 的显式方法形式。
+// IsRetryable is the explicit method form of RetryableByCode.
 func (err GatewayError) IsRetryable() bool {
 	return err.RetryableByCode()
 }
@@ -138,7 +150,8 @@ type gatewayErrorWire struct {
 	Details      json.RawMessage `json:"details"`
 }
 
-// UnmarshalJSON 用 json.Number 无损保留 Details 数值，并从冻结 details 字段提取 InvocationID。
+// UnmarshalJSON preserves numeric values in Details without loss by using
+// json.Number and extracts InvocationID from the frozen details field.
 func (err *GatewayError) UnmarshalJSON(data []byte) error {
 	var wire gatewayErrorWire
 	if err := json.Unmarshal(data, &wire); err != nil {

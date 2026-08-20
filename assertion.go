@@ -70,8 +70,11 @@ func NewEd25519SignerFromPEM(kid string, pemBytes []byte) (*Ed25519Signer, error
 	return NewEd25519Signer(kid, edKey)
 }
 
+// Algorithm returns the registered JWS algorithm name, "EdDSA".
 func (signer *Ed25519Signer) Algorithm() string { return "EdDSA" }
 
+// KeyID returns the key identifier supplied when the signer was constructed.
+// It returns an empty string for a nil receiver.
 func (signer *Ed25519Signer) KeyID() string {
 	if signer == nil {
 		return ""
@@ -79,6 +82,8 @@ func (signer *Ed25519Signer) KeyID() string {
 	return signer.kid
 }
 
+// Sign returns an Ed25519 signature for message. It returns an error when the
+// signer is nil or does not contain a correctly sized private key.
 func (signer *Ed25519Signer) Sign(message []byte) ([]byte, error) {
 	if signer == nil || len(signer.key) != ed25519.PrivateKeySize {
 		return nil, fmt.Errorf("Ed25519 signer is not configured")
@@ -86,14 +91,22 @@ func (signer *Ed25519Signer) Sign(message []byte) ([]byte, error) {
 	return ed25519.Sign(signer.key, message), nil
 }
 
+// String returns the fixed "[REDACTED_PRIVATE_KEY]" placeholder. It
+// intentionally never formats the signer's private key.
 func (signer *Ed25519Signer) String() string { return "[REDACTED_PRIVATE_KEY]" }
 
+// GoString returns the fixed "[REDACTED_PRIVATE_KEY]" placeholder for %#v
+// formatting. It intentionally never formats the signer's private key.
 func (signer *Ed25519Signer) GoString() string { return "[REDACTED_PRIVATE_KEY]" }
 
+// Format writes the fixed "[REDACTED_PRIVATE_KEY]" placeholder for every
+// formatting verb, so formatting cannot expose the signer's private key.
 func (signer *Ed25519Signer) Format(state fmt.State, verb rune) {
 	_, _ = state.Write([]byte("[REDACTED_PRIVATE_KEY]"))
 }
 
+// MarshalJSON encodes the fixed "[REDACTED_PRIVATE_KEY]" placeholder instead
+// of the signer's private key.
 func (signer *Ed25519Signer) MarshalJSON() ([]byte, error) {
 	return json.Marshal("[REDACTED_PRIVATE_KEY]")
 }
@@ -132,8 +145,11 @@ func NewES256SignerFromPEM(kid string, pemBytes []byte) (*ECDSAP256Signer, error
 	return NewES256Signer(kid, ecdsaKey)
 }
 
+// Algorithm returns the registered JWS algorithm name, "ES256".
 func (signer *ECDSAP256Signer) Algorithm() string { return "ES256" }
 
+// KeyID returns the key identifier supplied when the signer was constructed.
+// It returns an empty string for a nil receiver.
 func (signer *ECDSAP256Signer) KeyID() string {
 	if signer == nil {
 		return ""
@@ -141,6 +157,9 @@ func (signer *ECDSAP256Signer) KeyID() string {
 	return signer.kid
 }
 
+// Sign returns an ES256 signature for message using SHA-256 and the JWS
+// fixed-width R||S encoding. It returns an error when the signer is nil or does
+// not contain a configured P-256 private key.
 func (signer *ECDSAP256Signer) Sign(message []byte) ([]byte, error) {
 	if signer == nil || signer.key == nil || !isP256(signer.key.Curve) {
 		return nil, fmt.Errorf("ES256 signer is not configured")
@@ -157,14 +176,22 @@ func (signer *ECDSAP256Signer) Sign(message []byte) ([]byte, error) {
 	return signature, nil
 }
 
+// String returns the fixed "[REDACTED_PRIVATE_KEY]" placeholder. It
+// intentionally never formats the signer's private key.
 func (signer *ECDSAP256Signer) String() string { return "[REDACTED_PRIVATE_KEY]" }
 
+// GoString returns the fixed "[REDACTED_PRIVATE_KEY]" placeholder for %#v
+// formatting. It intentionally never formats the signer's private key.
 func (signer *ECDSAP256Signer) GoString() string { return "[REDACTED_PRIVATE_KEY]" }
 
+// Format writes the fixed "[REDACTED_PRIVATE_KEY]" placeholder for every
+// formatting verb, so formatting cannot expose the signer's private key.
 func (signer *ECDSAP256Signer) Format(state fmt.State, verb rune) {
 	_, _ = state.Write([]byte("[REDACTED_PRIVATE_KEY]"))
 }
 
+// MarshalJSON encodes the fixed "[REDACTED_PRIVATE_KEY]" placeholder instead
+// of the signer's private key.
 func (signer *ECDSAP256Signer) MarshalJSON() ([]byte, error) {
 	return json.Marshal("[REDACTED_PRIVATE_KEY]")
 }
@@ -197,14 +224,23 @@ func (jws JWS) Compact() string { return jws.compact.Reveal() }
 // Bytes returns a copy of the compact JWS bytes for a protobuf bytes field.
 func (jws JWS) Bytes() []byte { return []byte(jws.Compact()) }
 
+// String returns the fixed "[REDACTED]" placeholder instead of the compact
+// JWS. This is intentional: logging or printing a JWS must not expose its
+// assertion claims or signature.
 func (jws JWS) String() string { return redactedText }
 
+// GoString returns the fixed "[REDACTED]" placeholder for %#v formatting
+// instead of the compact JWS.
 func (jws JWS) GoString() string { return redactedText }
 
+// Format writes the fixed "[REDACTED]" placeholder for every formatting verb,
+// so formatting cannot expose the compact JWS.
 func (jws JWS) Format(state fmt.State, verb rune) {
 	_, _ = state.Write([]byte(redactedText))
 }
 
+// MarshalJSON encodes the fixed "[REDACTED]" placeholder instead of the
+// compact JWS, so ordinary JSON serialization cannot expose the assertion.
 func (jws JWS) MarshalJSON() ([]byte, error) { return json.Marshal(redactedText) }
 
 // AssertionInput contains token-bound identity context and the current

@@ -21,14 +21,22 @@ func newSecretString(value string) SecretString { return SecretString{value: val
 // should avoid storing or formatting the returned string.
 func (s SecretString) Reveal() string { return s.value }
 
+// String returns the fixed "[REDACTED]" placeholder instead of the stored
+// value.
 func (s SecretString) String() string { return redactedText }
 
+// GoString returns the fixed "[REDACTED]" placeholder for %#v formatting
+// instead of the stored value.
 func (s SecretString) GoString() string { return redactedText }
 
+// Format writes the fixed "[REDACTED]" placeholder for every formatting verb,
+// so formatting cannot expose the stored value.
 func (s SecretString) Format(state fmt.State, verb rune) {
 	_, _ = io.WriteString(state, redactedText)
 }
 
+// MarshalJSON encodes the fixed "[REDACTED]" placeholder instead of the
+// stored value.
 func (s SecretString) MarshalJSON() ([]byte, error) {
 	return json.Marshal(redactedText)
 }

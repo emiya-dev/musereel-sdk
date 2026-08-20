@@ -1,9 +1,10 @@
-// Package musereelsdk is the public Go SDK boundary for controlled MuseReel
-// workbench instances.
+// Package musereelsdk is the public Go SDK for controlled MuseReel workbench
+// instances. It provides the authentication, assertion-signing, Gateway HTTP,
+// and runtime control-plane clients used by an authorized workbench process.
 //
-// SDK-002 adds the authentication and transport foundation: mTLS loading and
-// rotation, short-lived runtime tokens, actor assertions, and the generic
-// authenticated gRPC call boundary. SDK-004 adds generated runtime protobuf
-// types and typed control-plane wrappers; ExchangeRuntimeToken uses the
-// standard protobuf codec and is kept behind GRPCTokenSource.
+// This package is intended for a controlled workbench instance, not for code
+// embedded in a browser, mobile application, or other customer-controlled
+// frontend. The main entry points are NewTLSConfig or DialRuntime for mTLS,
+// NewGRPCTokenSource and NewRuntimeClient for runtime operations, and
+// NewGatewayClient for authenticated invocation operations.
 package musereelsdk
