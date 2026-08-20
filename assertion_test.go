@@ -217,6 +217,53 @@ func TestSecretRedaction(t *testing.T) {
 	}
 }
 
+func TestECDSAP256SignerRedactsEveryPath(t *testing.T) {
+	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+	signer, err := NewES256Signer("kid-redaction-es", privateKey)
+	if err != nil {
+		t.Fatalf("NewES256Signer: %v", err)
+	}
+	privateDER, err := x509.MarshalPKCS8PrivateKey(privateKey)
+	if err != nil {
+		t.Fatalf("private key encoding: %v", err)
+	}
+	privateMaterials := []string{
+		privateKey.D.String(),
+		privateKey.D.Text(16),
+		string(privateKey.D.Bytes()),
+		string(privateDER),
+	}
+
+	paths := map[string]string{
+		"String":   signer.String(),
+		"GoString": signer.GoString(),
+		"fmt %v":   fmt.Sprintf("%v", signer),
+		"fmt %s":   fmt.Sprintf("%s", signer),
+		"fmt %+v":  fmt.Sprintf("%+v", signer),
+		"fmt %#v":  fmt.Sprintf("%#v", signer),
+		"fmt %q":   fmt.Sprintf("%q", signer),
+	}
+	marshaled, err := json.Marshal(signer)
+	if err != nil {
+		t.Fatalf("MarshalJSON: %v", err)
+	}
+	paths["MarshalJSON"] = string(marshaled)
+
+	for name, got := range paths {
+		for _, material := range privateMaterials {
+			if material != "" && strings.Contains(got, material) {
+				t.Errorf("%s leaks private key material: %q", name, got)
+			}
+		}
+		if !strings.Contains(got, "[REDACTED_PRIVATE_KEY]") {
+			t.Errorf("%s does not carry the private-key redaction marker: %q", name, got)
+		}
+	}
+}
+
 // x509MarshalPKCS8 is kept in the test file so the redaction test compares
 // against actual private DER without adding a production key-export method.
 func x509MarshalPKCS8(signer *Ed25519Signer) ([]byte, error) {

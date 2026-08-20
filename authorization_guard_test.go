@@ -5,7 +5,10 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"os"
+	"io/fs"
+	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -101,17 +104,29 @@ func TestCleanContextStillAttachesAuthorization(t *testing.T) {
 // assertNoOutgoingAuthorization。上面三条只覆盖当前这两个站点，
 // 将来新增一个追加点时它们不会变红——这一条会。
 func TestEveryAuthorizationAppendIsGuarded(t *testing.T) {
-	entries, err := os.ReadDir(".")
+	var files []string
+	err := filepath.WalkDir(".", func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			if path != "." && entry.Name() == ".git" {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if strings.HasSuffix(path, ".go") && !strings.HasSuffix(path, "_test.go") {
+			files = append(files, path)
+		}
+		return nil
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
+	sort.Strings(files)
 	appendSites := 0
 	var unguarded []string
-	for _, entry := range entries {
-		name := entry.Name()
-		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
-			continue
-		}
+	for _, name := range files {
 		fset := token.NewFileSet()
 		file, parseErr := parser.ParseFile(fset, name, nil, 0)
 		if parseErr != nil {
@@ -142,35 +157,81 @@ func TestEveryAuthorizationAppendIsGuarded(t *testing.T) {
 }
 
 func scanAuthorizationUse(body *ast.BlockStmt) (int, bool) {
-	appends := 0
-	guarded := false
+	var appendPositions []token.Pos
+	var guardPositions []token.Pos
 	ast.Inspect(body, func(node ast.Node) bool {
 		call, ok := node.(*ast.CallExpr)
 		if !ok {
 			return true
 		}
-		switch fn := call.Fun.(type) {
-		case *ast.SelectorExpr:
-			if fn.Sel.Name == "AppendToOutgoingContext" && callHasAuthorizationArg(call) {
-				appends++
-			}
-		case *ast.Ident:
-			if fn.Name == "assertNoOutgoingAuthorization" {
-				guarded = true
-			}
+		if isAuthorizationMutation(call) {
+			appendPositions = append(appendPositions, call.Pos())
+		}
+		if fn, ok := call.Fun.(*ast.Ident); ok && fn.Name == "assertNoOutgoingAuthorization" {
+			guardPositions = append(guardPositions, call.Pos())
 		}
 		return true
 	})
-	return appends, guarded
+	guarded := true
+	for _, appendPosition := range appendPositions {
+		guardFound := false
+		for _, guardPosition := range guardPositions {
+			if guardPosition < appendPosition {
+				guardFound = true
+				break
+			}
+		}
+		if !guardFound {
+			guarded = false
+			break
+		}
+	}
+	return len(appendPositions), guarded
 }
 
 func callHasAuthorizationArg(call *ast.CallExpr) bool {
 	for _, arg := range call.Args {
-		literal, ok := arg.(*ast.BasicLit)
-		if ok && literal.Kind == token.STRING &&
-			strings.EqualFold(strings.Trim(literal.Value, `"`), "authorization") {
+		if isAuthorizationLiteral(arg) {
 			return true
 		}
 	}
 	return false
+}
+
+func isAuthorizationLiteral(expr ast.Expr) bool {
+	literal, ok := expr.(*ast.BasicLit)
+	if !ok || literal.Kind != token.STRING {
+		return false
+	}
+	value, err := strconv.Unquote(literal.Value)
+	return err == nil && strings.EqualFold(value, "authorization")
+}
+
+func isAuthorizationMutation(call *ast.CallExpr) bool {
+	selector, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok {
+		return false
+	}
+	switch selector.Sel.Name {
+	case "AppendToOutgoingContext":
+		return callHasAuthorizationArg(call)
+	case "Set", "Append":
+		return isMetadataReceiver(selector.X) && len(call.Args) > 0 && isAuthorizationLiteral(call.Args[0])
+	case "NewOutgoingContext":
+		// The metadata argument may be an identifier built elsewhere, so the AST
+		// cannot prove that it contains no authorization. Treat every outgoing
+		// metadata boundary as requiring the same guard.
+		return true
+	default:
+		return false
+	}
+}
+
+func isMetadataReceiver(expr ast.Expr) bool {
+	ident, ok := expr.(*ast.Ident)
+	if !ok {
+		return false
+	}
+	name := strings.ToLower(ident.Name)
+	return name == "md" || strings.Contains(name, "metadata")
 }
