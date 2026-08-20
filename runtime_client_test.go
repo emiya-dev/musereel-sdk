@@ -461,6 +461,8 @@ func TestRuntimeRetryableMetadataHasThreeStates(t *testing.T) {
 		{name: "missing flag uses sdk fallback", stableCode: RuntimeRegistrationUnavailable, grpcCode: codes.Unavailable, metadata: map[string]string{}, want: true},
 		{name: "registration code not found is never retryable", stableCode: RuntimeRegistrationCodeNotFound, grpcCode: codes.InvalidArgument, metadata: map[string]string{"retryable": "true"}, want: false},
 		{name: "registration code merchant mismatch is never retryable", stableCode: RuntimeRegistrationCodeMerchantMismatch, grpcCode: codes.InvalidArgument, metadata: map[string]string{"retryable": "true"}, want: false},
+		{name: "registration code invalid is never retryable", stableCode: RuntimeRegistrationCodeInvalid, grpcCode: codes.InvalidArgument, metadata: map[string]string{"retryable": "true"}, want: false},
+		{name: "registration code expired is never retryable", stableCode: RuntimeRegistrationCodeExpired, grpcCode: codes.InvalidArgument, metadata: map[string]string{"retryable": "true"}, want: false},
 	}
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -672,6 +674,33 @@ func TestRuntimeClientValidationNegativeControls(t *testing.T) {
 	}
 }
 
+func TestRuntimeActorValidationContract(t *testing.T) {
+	testCases := []struct {
+		name  string
+		value string
+		valid bool
+	}{
+		{name: "leading space", value: " a"},
+		{name: "trailing space", value: "a "},
+		{name: "leading tab", value: "\ta"},
+		{name: "embedded NUL", value: "a\x00b"},
+		{name: "embedded newline", value: "a\nb"},
+		{name: "hash ID", value: strings.Repeat("a", 64), valid: true},
+		{name: "Chinese", value: "用户-01", valid: true},
+		{name: "emoji", value: "actor-😀", valid: true},
+		{name: "256 bytes", value: strings.Repeat("a", 256), valid: true},
+		{name: "257 bytes", value: strings.Repeat("a", 257)},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			err := validateActor(testCase.value)
+			if (err == nil) != testCase.valid {
+				t.Fatalf("validateActor(%q) error = %v, valid = %t", testCase.value, err, testCase.valid)
+			}
+		})
+	}
+}
+
 type runtimeErrorConn struct {
 	err   error
 	calls atomic.Int32
@@ -742,6 +771,34 @@ func TestRuntimeStableErrorMappingDoesNotAddRetry(t *testing.T) {
 				"registration_code_merchant_mismatch",
 				testRuntimeErrorDomain,
 				map[string]string{"retryable": "false"},
+			),
+		},
+		{
+			name:          "registration code invalid ErrorInfo details",
+			rawCode:       RuntimeRegistrationCodeInvalid,
+			wantCode:      RuntimeRegistrationCodeInvalid,
+			wantStatus:    codes.InvalidArgument,
+			wantRetryable: false,
+			err: runtimeErrorStatus(
+				codes.Unknown,
+				"邀请码在本站不可用",
+				"registration_code_invalid",
+				testRuntimeErrorDomain,
+				map[string]string{"retryable": "true"},
+			),
+		},
+		{
+			name:          "registration code expired ErrorInfo details",
+			rawCode:       RuntimeRegistrationCodeExpired,
+			wantCode:      RuntimeRegistrationCodeExpired,
+			wantStatus:    codes.InvalidArgument,
+			wantRetryable: false,
+			err: runtimeErrorStatus(
+				codes.Unknown,
+				"邀请码已不可再用",
+				"registration_code_expired",
+				testRuntimeErrorDomain,
+				map[string]string{"retryable": "true"},
 			),
 		},
 	}

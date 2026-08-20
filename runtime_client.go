@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	runtimepb "github.com/emiya-dev/musereel-sdk/runtime"
@@ -16,9 +17,19 @@ import (
 const (
 	// RuntimeRegistrationUnavailable 是注册解析面可重试的稳定错误码。
 	RuntimeRegistrationUnavailable = "registration_unavailable"
+	// RuntimeRegistrationCodeInvalid 是邀请码在本站不可用且不可重试的稳定错误码。
+	RuntimeRegistrationCodeInvalid = "registration_code_invalid"
+	// RuntimeRegistrationCodeExpired 是邀请码曾经可用但当前不可再用且不可重试的稳定错误码。
+	RuntimeRegistrationCodeExpired = "registration_code_expired"
 	// RuntimeRegistrationCodeNotFound 是邀请码不存在且不可重试的稳定错误码。
+	//
+	// Deprecated: 中枢 S78 起，registration_code_not_found 不再出现在传输边界；请使用
+	// RuntimeRegistrationCodeInvalid 表示当前契约中的不可用邀请码。
 	RuntimeRegistrationCodeNotFound = "registration_code_not_found"
 	// RuntimeRegistrationCodeMerchantMismatch 是邀请码与站点所属商户不匹配且不可重试的稳定错误码。
+	//
+	// Deprecated: 中枢 S78 起，registration_code_merchant_mismatch 不再出现在传输边界；请使用
+	// RuntimeRegistrationCodeInvalid 表示当前契约中的不可用邀请码。
 	RuntimeRegistrationCodeMerchantMismatch = "registration_code_merchant_mismatch"
 	// RuntimeQueryInvalid 是余额、流水等查询请求无效的稳定错误码。
 	RuntimeQueryInvalid = "runtime_query_invalid"
@@ -147,9 +158,9 @@ func (err *RuntimeRPCError) GRPCStatus() *status.Status {
 // ResolveRegistration 使用已认证的 mTLS + Bearer 实例 scope 解析注册 intent。
 // request.Domain 是前端提供的字符串；SDK 将它原样放在 protobuf request 中，
 // 不从 Host、Origin 或配置推导、规范化或补全。request.InviteCode 仅是渠道标识。
-// 邀请码不存在或与站点所属商户不匹配时，服务端分别返回
-// RuntimeRegistrationCodeNotFound 或 RuntimeRegistrationCodeMerchantMismatch，
-// 两者都是调用方输入错误，不可重试。
+// 邀请码在本站不可用时，传输边界只返回 RuntimeRegistrationCodeInvalid；邀请码曾经可用
+// 但当前不能再用时，只返回 RuntimeRegistrationCodeExpired。中枢内部的 not_found、
+// merchant_mismatch 等原因不会在 SDK 传输边界中继续细分；两者都是调用方输入错误，不可重试。
 //
 // registration_unavailable 的服务端响应应在外部 2 秒总预算内最多重试一次；
 // SDK 不内建该重试。
@@ -566,8 +577,13 @@ func validateIdempotencyKey(value string) error {
 }
 
 func validateActor(value string) error {
-	if value == "" || !utf8.ValidString(value) || len(value) > 256 {
-		return fmt.Errorf("actor must be non-empty valid UTF-8 of at most 256 bytes")
+	if value == "" || !utf8.ValidString(value) || len(value) > 256 || strings.TrimSpace(value) != value {
+		return fmt.Errorf("actor must be non-empty valid UTF-8 of at most 256 bytes without leading or trailing whitespace")
+	}
+	for _, character := range value {
+		if unicode.IsControl(character) {
+			return fmt.Errorf("actor must not contain control characters")
+		}
 	}
 	return nil
 }
@@ -606,16 +622,18 @@ func normalizeRuntimeError(err error) error {
 }
 
 func runtimeRetryable(err error, code string) bool {
-	// 这两个码先于 metadata 判定，是本函数里唯一「SDK 覆盖服务端信号」的位置，
+	// 这些邀请码错误码先于 metadata 判定，是本函数里唯一「SDK 覆盖服务端信号」的位置，
 	// 因此要说清为什么它们与下面那些码不同：它们描述的是**分类事实**——调用方给的
-	// 邀请码不存在、或不属于本站点所属商户，是请求本身错了，重试同一个请求永远不会
-	// 变成对的。而 registration_unavailable 之流描述的是**运行时状态**，服务端最清楚
-	// 此刻能不能再试，所以那些码让 metadata 说了算。
+	// 邀请码在本站不可用或已不可再用，重试同一个请求永远不会变成对的。而
+	// registration_unavailable 之流描述的是**运行时状态**，服务端最清楚此刻能不能再试，
+	// 所以那些码让 metadata 说了算。
 	// ⇒ 服务端即使误发 retryable=true，也不能让调用方对一个永不成功的输入反复重试。
-	// 对应用例见 TestRuntimeRetryableMetadataHasThreeStates 里那两条 metadata 为
-	// "true" 而 want 为 false 的行；删掉本 switch 它们会立刻变红（已实测）。
+	// 对应用例见 TestRuntimeRetryableMetadataHasThreeStates 里邀请码错误码 metadata 为
+	// "true" 而 want 为 false 的行；删掉对应分支它们会立刻变红。
 	switch code {
 	case RuntimeRegistrationCodeNotFound, RuntimeRegistrationCodeMerchantMismatch:
+		return false
+	case RuntimeRegistrationCodeInvalid, RuntimeRegistrationCodeExpired:
 		return false
 	}
 	if info, ok := runtimeErrorInfo(err); ok {
@@ -660,6 +678,8 @@ func runtimeStatusCode(stableCode string, fallback codes.Code) codes.Code {
 	case RuntimeRegistrationUnavailable:
 		return codes.Unavailable
 	case RuntimeRegistrationCodeNotFound, RuntimeRegistrationCodeMerchantMismatch:
+		return codes.InvalidArgument
+	case RuntimeRegistrationCodeInvalid, RuntimeRegistrationCodeExpired:
 		return codes.InvalidArgument
 	case RuntimeQueryInvalid:
 		return codes.InvalidArgument
