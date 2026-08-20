@@ -719,15 +719,15 @@ func TestRuntimeClientValidationNegativeControls(t *testing.T) {
 		// 06:220-222 用同一句给这三个 identity RPC 定 event_id 与 actor 两条制式，
 		// 表里三者都有 actor 字段。SDK 一直只校验了 event_id 那半句。
 		{"SyncIdentity 的 actor 首尾有空白", func() error {
-			_, err := client.SyncIdentity(context.Background(), &runtimepb.SyncIdentityRequest{EventId: "event-actor-01", Actor: " actor"})
+			_, err := client.SyncIdentity(context.Background(), &runtimepb.SyncIdentityRequest{EventId: "event-actor-0001", Actor: " actor"})
 			return err
 		}},
 		{"SyncVerificationStatus 的 actor 含控制字符", func() error {
-			_, err := client.SyncVerificationStatus(context.Background(), &runtimepb.SyncVerificationStatusRequest{EventId: "event-actor-02", Actor: "act\x00or", CredentialRef: "credential", Issuer: "issuer"})
+			_, err := client.SyncVerificationStatus(context.Background(), &runtimepb.SyncVerificationStatusRequest{EventId: "event-actor-0002", Actor: "act\x00or", CredentialRef: "credential", Issuer: "issuer"})
 			return err
 		}},
 		{"DisableIdentity 的 actor 为空", func() error {
-			_, err := client.DisableIdentity(context.Background(), &runtimepb.DisableIdentityRequest{EventId: "event-actor-03", Actor: ""})
+			_, err := client.DisableIdentity(context.Background(), &runtimepb.DisableIdentityRequest{EventId: "event-actor-0003", Actor: ""})
 			return err
 		}},
 	} {
