@@ -136,6 +136,12 @@ Gateway HTTP 面由
 维护；请去那里读取，不要复制到 README。路由契约仍归 Sluice 所有，本仓只记录锚点，
 不再复制第二份 HTTP 契约。
 
+**这条规则是拿代价换来的。** 本 README 与 `CONTRIBUTING.md` 早先的版本确实把
+锚点的文档版本号、基线日期和路由条数抄了进来，而在锚点本身变更之后，
+那几份副本**错了好几个月**——没有任何东西会拿散文去比对锚点文件，
+于是被重述的常量会无声地烂掉，而且看上去仍然权威。
+那几个过期的具体值这里同样不复述：把它们引回来，正是这段话要防的那件事。
+
 `contract-input/reference/jcs-server-reference.go.txt` 曾是“未哈希镜像”的反面教材：
 它读起来像权威文件，却没有人负责保鲜。它用 `sort.Strings`（UTF-8 字节序）排序对象键，而
 `jcs/jcs.go` 与线上 Sluice 实现 `backend/pkg/app/core/jcs.go` 都按 RFC 8785 §3.2.3

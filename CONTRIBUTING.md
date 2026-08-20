@@ -22,8 +22,11 @@ pin record, and run the local gate. A hash mismatch is a failed change.
 The gateway HTTP surface is anchored by
 `contract-input/GATEWAY_HTTP_ANCHOR.txt`. Read the chapter, source commit,
 route count, and freeze date **from that file**. They are deliberately not
-restated here: prose copies of an anchor can stay wrong because no gate
-compares prose against the anchor. The route contract is owned by Sluice and
+restated here, and that is not stylistic: this paragraph itself used to restate
+the document version, baseline date, and route count, and it stayed wrong for
+months after the anchor moved, because no gate compares prose against the
+anchor. The stale values are not quoted back here — repeating them would
+recreate the same failure. The route contract is owned by Sluice and
 is not reimplemented or copied into this repository.
 
 `contract-input/` holds exactly two kinds of file, and the distinction is what

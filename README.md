@@ -161,7 +161,15 @@ The gateway HTTP surface is anchored by
 [`contract-input/GATEWAY_HTTP_ANCHOR.txt`](contract-input/GATEWAY_HTTP_ANCHOR.txt).
 That file alone carries the frozen gateway chapter, source commit, route
 count, and freeze date. Read those values there; do not copy them into this
-README. The route contract remains owned by Sluice rather than becoming a
+README.
+
+That rule was paid for. Earlier revisions of this README and of
+`CONTRIBUTING.md` did restate the anchor's document version, baseline date, and
+route count, and those copies stayed wrong for months after the anchor itself
+moved — nothing compares prose against the anchor file, so a restated constant
+rots silently and still reads as authoritative. The specific stale values are
+deliberately not repeated here either: quoting them back would recreate exactly
+the failure this paragraph exists to prevent. The route contract remains owned by Sluice rather than becoming a
 second HTTP contract source here.
 
 `contract-input/reference/jcs-server-reference.go.txt` was the warning example
