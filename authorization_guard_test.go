@@ -5,9 +5,6 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"io/fs"
-	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -104,26 +101,14 @@ func TestCleanContextStillAttachesAuthorization(t *testing.T) {
 // assertNoOutgoingAuthorization。上面三条只覆盖当前这两个站点，
 // 将来新增一个追加点时它们不会变红——这一条会。
 func TestEveryAuthorizationAppendIsGuarded(t *testing.T) {
-	var files []string
-	err := filepath.WalkDir(".", func(path string, entry fs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		if entry.IsDir() {
-			if path != "." && entry.Name() == ".git" {
-				return fs.SkipDir
-			}
-			return nil
-		}
-		if strings.HasSuffix(path, ".go") && !strings.HasSuffix(path, "_test.go") {
-			files = append(files, path)
-		}
-		return nil
-	})
+	// 扫描面交给 git（见 repoGoFiles）。这里曾经是 filepath.WalkDir(".")，
+	// 而那会把 `go mod vendor` 生成的六百多个第三方 .go 一起扫进来——
+	// grpc 自己就有 AppendToOutgoingContext，当然不会调用本仓的守卫函数，
+	// 于是这条闸在一台只是跑过 vendor 的机器上无故变红。
+	files, err := repoGoFiles(".")
 	if err != nil {
 		t.Fatal(err)
 	}
-	sort.Strings(files)
 	appendSites := 0
 	var unguarded []string
 	for _, name := range files {

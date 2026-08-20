@@ -5,7 +5,6 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -136,27 +135,14 @@ var negativeSurfaceMutationWords = []string{
 
 // scanSDKNonTestGo 扫描仓库中所有非测试 Go 文件。
 func scanSDKNonTestGo(root string) ([]negativeSurfaceHit, error) {
-	var paths []string
-	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		if entry.IsDir() {
-			if entry.Name() == ".git" {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if filepath.Ext(path) != ".go" || strings.HasSuffix(path, "_test.go") {
-			return nil
-		}
-		paths = append(paths, path)
-		return nil
-	})
+	// 扫描面交给 git（见 repoGoFiles），不是整棵目录树：后者会把
+	// `go mod vendor` 放进来的第三方代码也当成"本仓的能力面"，而词表里的
+	// cost / vendor / payment 在任何一份依赖闭包里都必然命中。
+	// 合成负对照喂的临时目录不是 git 检出，repoGoFiles 会退化成 WalkDir。
+	paths, err := repoGoFiles(root)
 	if err != nil {
 		return nil, err
 	}
-	sort.Strings(paths)
 
 	var hits []negativeSurfaceHit
 	for _, path := range paths {
