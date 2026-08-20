@@ -27,16 +27,18 @@ const (
 	// RuntimeRegistrationCodeNotFound is the stable non-retryable error code for
 	// an invite code that does not exist.
 	//
-	// Deprecated: The server no longer exposes registration_code_not_found at
-	// the transport boundary; use RuntimeRegistrationCodeInvalid for an invite
-	// code that is unusable under the current contract.
+	// Deprecated: As of hub S78 the server no longer exposes
+	// registration_code_not_found at the transport boundary; use
+	// RuntimeRegistrationCodeInvalid for an invite code that is unusable under
+	// the current contract.
 	RuntimeRegistrationCodeNotFound = "registration_code_not_found"
 	// RuntimeRegistrationCodeMerchantMismatch is the stable non-retryable error
 	// code for an invite code that does not match the site's merchant.
 	//
-	// Deprecated: The server no longer exposes registration_code_merchant_mismatch
-	// at the transport boundary; use RuntimeRegistrationCodeInvalid for an
-	// invite code that is unusable under the current contract.
+	// Deprecated: As of hub S78 the server no longer exposes
+	// registration_code_merchant_mismatch at the transport boundary; use
+	// RuntimeRegistrationCodeInvalid for an invite code that is unusable under
+	// the current contract.
 	RuntimeRegistrationCodeMerchantMismatch = "registration_code_merchant_mismatch"
 	// RuntimeQueryInvalid is the stable error code for an invalid balance or
 	// ledger query request.

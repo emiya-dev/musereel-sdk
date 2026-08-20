@@ -432,8 +432,9 @@ func (client *GatewayClient) NewPoller(invocationID string) (*GatewayPoller, err
 	return &GatewayPoller{client: client, invocationID: invocationID}, nil
 }
 
-// Poll performs one GET, observes the previous Retry-After, and updates the
-// ETag.
+// Poll performs one GET and updates the ETag. It first blocks until the
+// previous response's Retry-After has elapsed, so a caller in a loop does not
+// need to sleep itself.
 func (poller *GatewayPoller) Poll(ctx context.Context) (GatewayGetResponse, error) {
 	if poller == nil || poller.client == nil {
 		return GatewayGetResponse{}, fmt.Errorf("gateway poller is not configured")
