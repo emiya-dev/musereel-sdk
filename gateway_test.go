@@ -210,6 +210,22 @@ func TestGatewayCreateAsyncProtocolErrorsRetainLocationInvocationID(t *testing.T
 			body:   []byte("not-json"),
 			wantID: "",
 		},
+		{
+			// Location 解不出来、但 body 校验得过：ID 从 body 回落。
+			// 二次审查（grok 面 1）点名的同构漏网——mismatch 时信 Location，
+			// Location 坏掉时却把已经校验过的 snapshot.ID 一起扔了。
+			name:     "unparsable Location falls back to snapshot ID",
+			location: "https://evil.example.com/somewhere/else?x=1",
+			body:     validGatewaySnapshotBody("inv-from-body", 1, string(GatewayStateAccepted), false),
+			wantID:   "inv-from-body",
+		},
+		{
+			// 两边都解不出来时不许编造。
+			name:     "unparsable Location and bad body yields no ID",
+			location: "https://evil.example.com/somewhere/else?x=1",
+			body:     []byte("not-json"),
+			wantID:   "",
+		},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			client, _, _, _ := newGatewayTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {

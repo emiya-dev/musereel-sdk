@@ -31,9 +31,15 @@ const (
 )
 
 // GatewayError 是 Gateway HTTP 返回的稳定错误形状。Retryable 保留 wire 原值供诊断；
-// SDK 自造的错误则以冻结码表的判定作为缺省值。重试判断必须调用
-// RetryableGatewayCode 或 RetryableByCode；只有 HTTP wire 的 internal_error 会按其
-// 显式 retryable 值判定，其他错误码仍按冻结码表判定。
+// SDK 自造的错误则以冻结码表的判定作为缺省值。
+//
+// 🔴 重试判断请调用 RetryableByCode 或 IsRetryable，**不要**直接调
+// RetryableGatewayCode。两者曾经等价，现在不是了：RetryableGatewayCode 只吃一个
+// code 字符串，拿不到这次响应的 retryable 值，因此对 internal_error 恒返回 true。
+// 而 06:611-619 说 internal_error 的 retryable **不是常量**——确定性的部署配置失败
+// 会以 internal_error + retryable=false 出现，调用方必须停止重试。
+// 只有 RetryableByCode / IsRetryable 看得见 wire 值。
+// RetryableGatewayCode 保留下来是给「手里只有一个 code 字符串」的场景当保守缺省用的。
 type GatewayError struct {
 	Code         string         `json:"code"`
 	Message      string         `json:"message"`
@@ -64,6 +70,9 @@ func (err GatewayError) Error() string {
 func (err GatewayError) ErrorCode() string { return err.Code }
 
 // RetryableGatewayCode 返回冻结码表的 retryable 缺省判定。
+//
+// ⚠ 它看不到本次响应的 wire retryable，所以对 internal_error 恒为 true。
+// 拿得到 *GatewayError 时一律用 RetryableByCode，别用这个——见 GatewayError 的说明。
 func RetryableGatewayCode(code string) bool {
 	switch code {
 	case GatewayRateLimited, GatewayUpstreamUnavailable, GatewayInternalError:

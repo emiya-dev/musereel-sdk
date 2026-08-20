@@ -304,10 +304,15 @@ func (client *GatewayClient) create(ctx context.Context, request GatewayCreateRe
 		return GatewayCreateResponse{}, err
 	}
 	if locationErr != nil || locationID != snapshot.ID {
+		// 两边都可能带得出 ID，优先信 Location（它是契约点名的那个出口，
+		// 06:542-543）；Location 解不出来时回落到 body——此时 snapshot 已经过
+		// validateGatewaySnapshot，snapshot.ID 是校验过的合法 ID，扔掉它等于
+		// 让调用方在「invocation 明明已落库」的情况下只能盲目重提。
+		recoveredID := snapshot.ID
 		if locationErr == nil {
-			return GatewayCreateResponse{}, newGatewayProtocolErrorWithInvocationID(response.StatusCode, locationID)
+			recoveredID = locationID
 		}
-		return GatewayCreateResponse{}, newGatewayProtocolError(response.StatusCode)
+		return GatewayCreateResponse{}, newGatewayProtocolErrorWithInvocationID(response.StatusCode, recoveredID)
 	}
 	return GatewayCreateResponse{
 		StatusCode:   response.StatusCode,
