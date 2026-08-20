@@ -27,9 +27,11 @@ metadata as one reviewed change. The local gate recomputes the mirror's
 SHA-256 and fails unless it equals the pinned value. It does not fetch the
 internal source repository.
 
-Everything under `contract-input/` must be pinned by
-`scripts/check-contract-pin.sh`. A file that lives there but is not hashed by
-the gate reads as authoritative while nothing keeps it current.
+Every **mirror** under `contract-input/` must be hashed by
+`scripts/check-contract-pin.sh`. (The pin records themselves — `SOURCE.txt` and
+`GATEWAY_HTTP_ANCHOR.txt` — are the gate's input rather than its subject; see
+`CONTRIBUTING.md`.) A mirror that lives there but is not hashed by the gate
+reads as authoritative while nothing keeps it current.
 `contract-input/reference/jcs-server-reference.go.txt` was exactly that: an
 unpinned server-side JCS copy that had gone stale on the one rule most likely
 to break request fingerprints — it sorted object keys with `sort.Strings`

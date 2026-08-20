@@ -21,11 +21,24 @@ and stayed wrong for months after the anchor moved to four routes at
 contract is owned by Sluice and is not reimplemented or copied into this
 repository.
 
-Every file under `contract-input/` must be hashed by
-`scripts/check-contract-pin.sh`. Do not add an unpinned file there — it will
-read as frozen fact while nothing keeps it current. If a reference copy is
-worth keeping, pin it; if it is not worth pinning, it does not belong in
-`contract-input/`.
+`contract-input/` holds exactly two kinds of file, and the distinction is what
+keeps it honest:
+
+- **Mirrors** — copies of something that lives in Sluice (`runtime.proto`,
+  `frozen_public_error_codes.json`). Every mirror **must** be hashed by
+  `scripts/check-contract-pin.sh`. An unhashed mirror reads as frozen fact
+  while nothing keeps it current, which is how
+  `reference/jcs-server-reference.go.txt` drifted from UTF-16 to UTF-8 key
+  ordering without anyone noticing.
+- **Pin records** — the files that *carry* the expected values (`SOURCE.txt`,
+  `GATEWAY_HTTP_ANCHOR.txt`). These are the gate's input, not its subject, so
+  they are not self-hashed. `SOURCE.txt` is required to exist (the gate exits 1
+  without it); `GATEWAY_HTTP_ANCHOR.txt` records a document anchor that this
+  repository has no local way to verify — updating it is a reviewed change, not
+  a gated one.
+
+Do not add a third kind. A mirror that is not worth hashing does not belong in
+`contract-input/` at all.
 
 ## Breaking-change discipline (frozen §1.2)
 
