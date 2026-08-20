@@ -6,6 +6,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -161,6 +162,14 @@ func TestGatewayInvocationErrorCodesMatchFrozenContract(t *testing.T) {
 	}
 	if RetryableGatewayCode(futureGatewayCode) {
 		t.Fatalf("未登记的 Gateway 错误码 %q 被判为可重试", futureGatewayCode)
+	}
+}
+
+func TestGatewayUnknownErrorCodePreservesHTTPStatus(t *testing.T) {
+	body := []byte(`{"request_id":"req-unknown","error":{"code":"future_gateway_error_code","message":"diagnostic","retryable":true,"retry_after_ms":null,"details":{}}}`)
+	err := gatewayErrorFromBytes(body, http.StatusBadRequest, isGatewayInvocationErrorCode)
+	if err.Code != GatewayInternalError || err.HTTPStatus != http.StatusBadRequest {
+		t.Fatalf("unknown error = %#v, want code %q and HTTP status %d", err, GatewayInternalError, http.StatusBadRequest)
 	}
 }
 

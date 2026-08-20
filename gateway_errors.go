@@ -31,7 +31,15 @@ const (
 )
 
 // GatewayError 是 Gateway HTTP 返回的稳定错误形状。Retryable 保留 wire 原值供诊断；
-// 重试判断必须调用 RetryableGatewayCode 或 RetryableByCode，invocation 以冻结三码表为准。
+// SDK 自造的错误则以冻结码表的判定作为缺省值。
+//
+// 🔴 重试判断请调用 RetryableByCode 或 IsRetryable，**不要**直接调
+// RetryableGatewayCode。两者曾经等价，现在不是了：RetryableGatewayCode 只吃一个
+// code 字符串，拿不到这次响应的 retryable 值，因此对 internal_error 恒返回 true。
+// 而 06:611-619 说 internal_error 的 retryable **不是常量**——确定性的部署配置失败
+// 会以 internal_error + retryable=false 出现，调用方必须停止重试。
+// 只有 RetryableByCode / IsRetryable 看得见 wire 值。
+// RetryableGatewayCode 保留下来是给「手里只有一个 code 字符串」的场景当保守缺省用的。
 type GatewayError struct {
 	Code         string         `json:"code"`
 	Message      string         `json:"message"`
@@ -42,6 +50,8 @@ type GatewayError struct {
 	HTTPStatus   int    `json:"-"`
 	RequestID    string `json:"-"`
 	InvocationID string `json:"-"`
+
+	retryableFromWire bool
 }
 
 // Error 故意不包含 Message，避免服务端诊断文本意外带入 token 或 assertion 全文。
@@ -59,7 +69,10 @@ func (err GatewayError) Error() string {
 // ErrorCode 对齐既有 SDK 错误面的 ErrorCodeProvider。
 func (err GatewayError) ErrorCode() string { return err.Code }
 
-// RetryableGatewayCode 返回冻结的 invocation retryable 三码判定。
+// RetryableGatewayCode 返回冻结码表的 retryable 缺省判定。
+//
+// ⚠ 它看不到本次响应的 wire retryable，所以对 internal_error 恒为 true。
+// 拿得到 *GatewayError 时一律用 RetryableByCode，别用这个——见 GatewayError 的说明。
 func RetryableGatewayCode(code string) bool {
 	switch code {
 	case GatewayRateLimited, GatewayUpstreamUnavailable, GatewayInternalError:
@@ -87,20 +100,26 @@ func RetryableGatewayCode(code string) bool {
 }
 
 // RetryableByCode 返回 invocation 错误的有效 retryable 判定；服务端值矛盾时不改写
-// GatewayError.Retryable 原字段。
+// GatewayError.Retryable 原字段。HTTP wire 的 internal_error 例外地使用服务端显式值。
 func (err GatewayError) RetryableByCode() bool {
+	if err.Code == GatewayInternalError && err.retryableFromWire {
+		return err.Retryable
+	}
 	return RetryableGatewayCode(err.Code)
 }
 
 // IsRetryable 是 RetryableByCode 的显式方法形式。
 func (err GatewayError) IsRetryable() bool {
-	return RetryableGatewayCode(err.Code)
+	return err.RetryableByCode()
 }
 
 type gatewayErrorWire struct {
-	Code         string          `json:"code"`
-	Message      string          `json:"message"`
-	Retryable    bool            `json:"retryable"`
+	Code    string `json:"code"`
+	Message string `json:"message"`
+	// Retryable 是指针而不是 bool：要分得清「服务端说了 false」与「服务端根本没说」。
+	// 06:611-619 把未登记内部码的缺省定为**保守可重试**，所以缺字段时不能落成
+	// bool 零值 false —— 那会让调用方对一个瞬时内部错过早放弃。
+	Retryable    *bool           `json:"retryable"`
 	RetryAfterMS *int64          `json:"retry_after_ms"`
 	Details      json.RawMessage `json:"details"`
 }
@@ -116,13 +135,22 @@ func (err *GatewayError) UnmarshalJSON(data []byte) error {
 	if detailsErr != nil {
 		return detailsErr
 	}
+	retryable := false
+	if wire.Retryable != nil {
+		retryable = *wire.Retryable
+	}
 	*err = GatewayError{
 		Code:         wire.Code,
 		Message:      wire.Message,
-		Retryable:    wire.Retryable,
+		Retryable:    retryable,
 		RetryAfterMS: wire.RetryAfterMS,
 		Details:      details,
 		InvocationID: gatewayInvocationIDFromDetails(details),
+
+		// 只有服务端**显式**给了 retryable，它才有资格压过码表。
+		// ⚠ 这一行必须留在整体赋值里：*err = GatewayError{...} 会重置每个未导出字段，
+		// 在它之后赋值才有效，在它之前赋值会被抹掉。
+		retryableFromWire: wire.Retryable != nil,
 	}
 	return nil
 }
@@ -190,6 +218,12 @@ func newGatewayError(code string, status int, requestID, message string) *Gatewa
 
 func newGatewayProtocolError(status int) *GatewayError {
 	return newGatewayError(GatewayInternalError, status, "", "gateway response did not match the frozen contract")
+}
+
+func newGatewayProtocolErrorWithInvocationID(status int, invocationID string) *GatewayError {
+	err := newGatewayProtocolError(status)
+	err.InvocationID = invocationID
+	return err
 }
 
 func gatewayErrorFromBytes(body []byte, status int, allowed func(string) bool) *GatewayError {

@@ -283,18 +283,36 @@ func (client *GatewayClient) create(ctx context.Context, request GatewayCreateRe
 		}, nil
 	}
 
-	if response.StatusCode != http.StatusAccepted || !gatewayMediaType(response, "application/json") {
+	if response.StatusCode != http.StatusAccepted {
 		response.Body.Close()
+		return GatewayCreateResponse{}, newGatewayProtocolError(response.StatusCode)
+	}
+	location := response.Header.Get("Location")
+	locationID, locationErr := client.invocationIDFromLocation(location)
+	if !gatewayMediaType(response, "application/json") {
+		response.Body.Close()
+		if locationErr == nil {
+			return GatewayCreateResponse{}, newGatewayProtocolErrorWithInvocationID(response.StatusCode, locationID)
+		}
 		return GatewayCreateResponse{}, newGatewayProtocolError(response.StatusCode)
 	}
 	requestID, snapshot, err := decodeGatewaySnapshotResponse(response)
 	if err != nil {
+		if gatewayErr, ok := err.(*GatewayError); ok && locationErr == nil {
+			gatewayErr.InvocationID = locationID
+		}
 		return GatewayCreateResponse{}, err
 	}
-	location := response.Header.Get("Location")
-	locationID, locationErr := client.invocationIDFromLocation(location)
 	if locationErr != nil || locationID != snapshot.ID {
-		return GatewayCreateResponse{}, newGatewayProtocolError(response.StatusCode)
+		// 两边都可能带得出 ID，优先信 Location（它是契约点名的那个出口，
+		// 06:542-543）；Location 解不出来时回落到 body——此时 snapshot 已经过
+		// validateGatewaySnapshot，snapshot.ID 是校验过的合法 ID，扔掉它等于
+		// 让调用方在「invocation 明明已落库」的情况下只能盲目重提。
+		recoveredID := snapshot.ID
+		if locationErr == nil {
+			recoveredID = locationID
+		}
+		return GatewayCreateResponse{}, newGatewayProtocolErrorWithInvocationID(response.StatusCode, recoveredID)
 	}
 	return GatewayCreateResponse{
 		StatusCode:   response.StatusCode,
