@@ -1,11 +1,21 @@
-// Package jcs implements the RFC 8785 subset frozen by the Sluice server
-// reference in contract-input/reference/jcs-server-reference.go.txt.
+// Package jcs implements the RFC 8785 subset frozen by the Sluice server,
+// whose live implementation is backend/pkg/app/core/jcs.go in the sluice
+// repository.
 //
 // The subset accepts integers and strings, rejects duplicate object keys,
 // floating-point/exponent notation, invalid UTF-8, and unpaired UTF-16
-// surrogates. Empty input is treated as {} as required by the server
-// reference. This implementation intentionally follows the reference's
-// encoding/json + UseNumber behavior rather than a different JCS library.
+// surrogates. Empty input is treated as {}. This implementation intentionally
+// follows the server's encoding/json + UseNumber behavior rather than a
+// different JCS library.
+//
+// Object property names are ordered by UTF-16 code units (RFC 8785 §3.2.3),
+// not by Go's sort.Strings UTF-8 byte order — see sortJCSKeys/lessUTF16 below
+// and the U+10000 vs U+E000 assertion in jcs_test.go. This package used to
+// cite contract-input/reference/jcs-server-reference.go.txt as its frozen
+// reference; that copy was removed because it had gone stale on exactly this
+// rule (it still called sort.Strings) while nothing in the pin gate hashed it.
+// Reimplementing from it would have produced request fingerprints that differ
+// from both this package and the live server on non-BMP property names.
 package jcs
 
 import (

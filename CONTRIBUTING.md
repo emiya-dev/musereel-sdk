@@ -13,10 +13,32 @@ the source checkout, update the source commit, SHA-256, and freeze date in the
 pin record, and run the local gate. A hash mismatch is a failed change.
 
 The gateway HTTP surface is anchored by
-`contract-input/GATEWAY_HTTP_ANCHOR.txt`: frozen chapter `06`, document
-version `v0.9`, freeze date `2026-08-05`, and five routes. The route contract is
-owned by Sluice and is not reimplemented or copied into this repository by
-SDK-001.
+`contract-input/GATEWAY_HTTP_ANCHOR.txt`. Read the chapter, source commit,
+route count, and freeze date **from that file**. They are deliberately not
+restated here: this paragraph used to say `v0.9` / `2026-08-05` / five routes
+and stayed wrong for months after the anchor moved to four routes at
+`2026-08-18`, because no gate compares prose against the anchor. The route
+contract is owned by Sluice and is not reimplemented or copied into this
+repository.
+
+`contract-input/` holds exactly two kinds of file, and the distinction is what
+keeps it honest:
+
+- **Mirrors** — copies of something that lives in Sluice (`runtime.proto`,
+  `frozen_public_error_codes.json`). Every mirror **must** be hashed by
+  `scripts/check-contract-pin.sh`. An unhashed mirror reads as frozen fact
+  while nothing keeps it current, which is how
+  `reference/jcs-server-reference.go.txt` drifted from UTF-16 to UTF-8 key
+  ordering without anyone noticing.
+- **Pin records** — the files that *carry* the expected values (`SOURCE.txt`,
+  `GATEWAY_HTTP_ANCHOR.txt`). These are the gate's input, not its subject, so
+  they are not self-hashed. `SOURCE.txt` is required to exist (the gate exits 1
+  without it); `GATEWAY_HTTP_ANCHOR.txt` records a document anchor that this
+  repository has no local way to verify — updating it is a reviewed change, not
+  a gated one.
+
+Do not add a third kind. A mirror that is not worth hashing does not belong in
+`contract-input/` at all.
 
 ## Breaking-change discipline (frozen §1.2)
 

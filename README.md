@@ -27,15 +27,38 @@ metadata as one reviewed change. The local gate recomputes the mirror's
 SHA-256 and fails unless it equals the pinned value. It does not fetch the
 internal source repository.
 
+Every **mirror** under `contract-input/` must be hashed by
+`scripts/check-contract-pin.sh`. (The pin records themselves — `SOURCE.txt` and
+`GATEWAY_HTTP_ANCHOR.txt` — are the gate's input rather than its subject; see
+`CONTRIBUTING.md`.) A mirror that lives there but is not hashed by the gate
+reads as authoritative while nothing keeps it current.
+`contract-input/reference/jcs-server-reference.go.txt` was exactly that: an
+unpinned server-side JCS copy that had gone stale on the one rule most likely
+to break request fingerprints — it sorted object keys with `sort.Strings`
+(UTF-8 byte order) while `jcs/jcs.go` and the live Sluice implementation both
+sort by UTF-16 code units per RFC 8785 §3.2.3. The two disagree on non-BMP
+property names, so anyone reimplementing from that copy would have produced
+fingerprints that fail `actor_assertion_invalid` with no hint at the cause. It
+has been removed. The behavioural fact source for JCS is `jcs/jcs.go` together
+with the UTF-16 ordering assertions in `jcs/jcs_test.go`.
+
 `ResolveRegistrationRequest.domain` is supplied by the frontend and forwarded
 unchanged through the SDK; the SDK does not derive, normalize, or complete it
 from Host, Origin, or configuration. `invite_code` remains the frozen wire
 field and is a channel identifier only.
 
-The gateway HTTP surface is anchored to frozen chapter `06`, document version
-`v0.9`, and the 2026-08-05 SDK-001 freeze baseline. The four-route HTTP
-contract remains owned by Sluice; this SDK baseline records the anchor rather
-than duplicating route implementation or an additional HTTP contract source.
+The gateway HTTP surface is anchored by `contract-input/GATEWAY_HTTP_ANCHOR.txt`.
+That file — not this README — carries the frozen chapter, source commit, route
+count, and freeze date; read it there rather than trusting a copy. The route
+contract remains owned by Sluice; this SDK records the anchor rather than
+duplicating route implementation or an additional HTTP contract source.
+
+Anchor values are deliberately not restated here. An earlier copy in this file
+and in `CONTRIBUTING.md` still claimed document version `v0.9`, the 2026-08-05
+baseline, and five routes long after the anchor moved to four routes at
+`2026-08-18` (BE-166/S74 removed the public site-context route). A restated
+constant has no gate keeping it honest, so it silently rots; the anchor file is
+the single place to change.
 
 `runtime/runtime.pb.go` and `runtime/runtime_grpc.pb.go` are generated from the
 frozen `contract-input/runtime.proto` with the pinned local protoc toolchain.
@@ -76,7 +99,9 @@ go test -tags conformance ./conformance
 `MUSEREEL_CONFORMANCE_SKU_ID`、`MUSEREEL_CONFORMANCE_TASK_REF`、
 `MUSEREEL_CONFORMANCE_DELIVERY_MODE`（`async` 或 `stream`）。可选项为
 `MUSEREEL_CONFORMANCE_MTLS_SERVER_NAME`、
-`MUSEREEL_CONFORMANCE_SPEC_SCHEMA_VERSION`（默认 `v1`）、
+`MUSEREEL_CONFORMANCE_SPEC_SCHEMA_VERSION`（**没有单一默认值**：留空时按 SKU 取——
+`video.generate.v1` 为 `3`，其余六个 SKU 为 `1`；见 `conformance.go` 的
+`conformanceSchemaVersionBySKU`）、
 `MUSEREEL_CONFORMANCE_SPEC_INPUT_JSON`、
 `MUSEREEL_CONFORMANCE_SPEC_PARAMETERS_JSON`、
 `MUSEREEL_CONFORMANCE_MODERATION_RECEIPT`、
