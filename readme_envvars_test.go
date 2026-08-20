@@ -126,3 +126,47 @@ func TestREADMEConformanceEnvTableMatchesCode(t *testing.T) {
 	t.Logf("对拍通过：%d 个环境变量，扫描面 conformance/%v，表 %v",
 		len(codeNames), scanned, sortedNames(codeNames))
 }
+
+// 上面那道闸靠**字面量**认变量名，因此有两个它看不见的入口。两个都不会让它变红，
+// 只会让它不再覆盖新加的变量——而"绿"和"覆盖完整"在外面看完全同形，
+// 这正是守卫最坏的失效方式：它还在跑，只是不再说话了。
+//
+// ⇒ 与其等哪天有人踩中，不如把这两个入口本身钉住：出现就红，并直接说清
+// 该去扩大哪一侧的扫描面。当前两者都是零命中，所以这条断言不会无故假红。
+func TestConformanceEnvReadsStayInsideGuardedSurface(t *testing.T) {
+	entries, err := os.ReadDir("conformance")
+	if err != nil {
+		t.Fatalf("读取 conformance 目录失败：%v", err)
+	}
+
+	// 入口①：把 os.Getenv 挪进 _test.go。上面那道闸刻意跳过测试文件
+	// （测试里出现的变量名不代表产品代码真的读它），于是挪过去就等于挪出扫描面。
+	// 入口②：拼接出变量名，例如 os.Getenv("MUSEREEL_CONFORMANCE_" + suffix)。
+	// 拼出来的名字在源码里根本不作为一个完整字面量存在，正则永远抓不到。
+	concatenated := regexp.MustCompile(`os\.Getenv\([^)]*(\+|Sprintf)`)
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(name, ".go") {
+			continue
+		}
+		raw, err := os.ReadFile(filepath.Join("conformance", name))
+		if err != nil {
+			t.Fatalf("读取 conformance/%s 失败：%v", name, err)
+		}
+		body := string(raw)
+
+		if strings.HasSuffix(name, "_test.go") && strings.Contains(body, "os.Getenv") {
+			t.Errorf("conformance/%s 是测试文件却读了环境变量。"+
+				"TestREADMEConformanceEnvTableMatchesCode 的扫描面刻意排除 _test.go，"+
+				"所以这里读的变量不会被拿去和 README 对拍——表可以缺它而闸依然绿。"+
+				"要么把读取移回非测试文件，要么把扫描面扩到这个文件，"+
+				"并想清楚测试里的负控假变量名会不会因此假红。", name)
+		}
+		if location := concatenated.FindString(body); location != "" {
+			t.Errorf("conformance/%s 用拼接的方式读环境变量：%q。"+
+				"拼出来的名字在源码里不是一个完整字面量，对拍闸看不见它，"+
+				"README 缺了它也不会红。"+
+				"请改成完整字面量常量，或把这道闸换成 AST 分析。", name, location)
+		}
+	}
+}

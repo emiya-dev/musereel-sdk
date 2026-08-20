@@ -114,10 +114,18 @@ The required SDK-001 gate is:
 ./scripts/ci.sh check
 ```
 
-It runs, in order, `go build ./...`, `go vet ./...`, `go test ./...`, and the
-contract pin check. The conformance-tagged build and short test are included
-by the script as well; the real compose conformance run is a separate
-environmental exercise. The repository has no hosted workflow in this
+It runs, in order: `gofmt -l .` (a formatting failure stops the gate before
+anything is built), `go build ./...` and `go build -tags conformance ./...`,
+`go vet ./...` and `go vet -tags conformance ./...`, `go test ./...` and
+`go test -tags conformance -short ./...`, and finally the contract pin check.
+The real compose conformance run is a separate environmental exercise.
+
+The `gofmt` step is first on purpose and was added at a cost: this repository
+had no formatting gate for a while, and `gateway.go` reached master carrying
+unformatted struct alignment. Format drift changes no semantics, but it mixes
+alignment noise into every later diff and hides the real change surface. Note
+that `gofmt -l` exits 0 even when it lists files, so `ci.sh` checks its output
+for emptiness rather than trusting the exit code. The repository has no hosted workflow in this
 milestone.
 
 ## S31 negative boundary
