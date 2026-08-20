@@ -10,9 +10,9 @@ import (
 
 const runtimeErrorDomain = "sluice.runtime"
 
-// Stable runtime error codes frozen by the SDK-002 contract. Branches in the
-// SDK use these codes, not unstable human-readable status text or transport
-// status alone.
+// RuntimeUnauthenticated, ActorAssertionInvalid, and ActorAssertionReplayed
+// are stable runtime error codes. SDK branches use these codes rather than
+// unstable human-readable status text or transport status alone.
 const (
 	RuntimeUnauthenticated = "runtime_unauthenticated"
 	ActorAssertionInvalid  = "actor_assertion_invalid"

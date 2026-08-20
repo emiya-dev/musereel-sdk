@@ -15,27 +15,38 @@ import (
 )
 
 const (
-	// RuntimeRegistrationUnavailable 是注册解析面可重试的稳定错误码。
+	// RuntimeRegistrationUnavailable is the stable retryable error code for
+	// registration resolution being temporarily unavailable.
 	RuntimeRegistrationUnavailable = "registration_unavailable"
-	// RuntimeRegistrationCodeInvalid 是邀请码在本站不可用且不可重试的稳定错误码。
+	// RuntimeRegistrationCodeInvalid is the stable non-retryable error code for
+	// an invite code that is not usable at this site.
 	RuntimeRegistrationCodeInvalid = "registration_code_invalid"
-	// RuntimeRegistrationCodeExpired 是邀请码曾经可用但当前不可再用且不可重试的稳定错误码。
+	// RuntimeRegistrationCodeExpired is the stable non-retryable error code for
+	// an invite code that was usable but can no longer be used.
 	RuntimeRegistrationCodeExpired = "registration_code_expired"
-	// RuntimeRegistrationCodeNotFound 是邀请码不存在且不可重试的稳定错误码。
+	// RuntimeRegistrationCodeNotFound is the stable non-retryable error code for
+	// an invite code that does not exist.
 	//
-	// Deprecated: 中枢 S78 起，registration_code_not_found 不再出现在传输边界；请使用
-	// RuntimeRegistrationCodeInvalid 表示当前契约中的不可用邀请码。
+	// Deprecated: As of hub S78 the server no longer exposes
+	// registration_code_not_found at the transport boundary; use
+	// RuntimeRegistrationCodeInvalid for an invite code that is unusable under
+	// the current contract.
 	RuntimeRegistrationCodeNotFound = "registration_code_not_found"
-	// RuntimeRegistrationCodeMerchantMismatch 是邀请码与站点所属商户不匹配且不可重试的稳定错误码。
+	// RuntimeRegistrationCodeMerchantMismatch is the stable non-retryable error
+	// code for an invite code that does not match the site's merchant.
 	//
-	// Deprecated: 中枢 S78 起，registration_code_merchant_mismatch 不再出现在传输边界；请使用
-	// RuntimeRegistrationCodeInvalid 表示当前契约中的不可用邀请码。
+	// Deprecated: As of hub S78 the server no longer exposes
+	// registration_code_merchant_mismatch at the transport boundary; use
+	// RuntimeRegistrationCodeInvalid for an invite code that is unusable under
+	// the current contract.
 	RuntimeRegistrationCodeMerchantMismatch = "registration_code_merchant_mismatch"
-	// RuntimeQueryInvalid 是余额、流水等查询请求无效的稳定错误码。
+	// RuntimeQueryInvalid is the stable error code for an invalid balance or
+	// ledger query request.
 	RuntimeQueryInvalid = "runtime_query_invalid"
-	// RuntimeSubjectUnavailable 是运行时 subject 暂不可用的稳定错误码。
+	// RuntimeSubjectUnavailable is the stable error code for a runtime subject
+	// that is temporarily unavailable.
 	RuntimeSubjectUnavailable = "runtime_subject_unavailable"
-	// RuntimeIdentityInactive 是 identity 已停用的稳定错误码。
+	// RuntimeIdentityInactive is the stable error code for an inactive identity.
 	RuntimeIdentityInactive = "identity_inactive"
 
 	// runtimeAssertionMethod 是 gRPC 面 actor assertion 的 method 分量。
@@ -51,8 +62,9 @@ const (
 	runtimeAssertionMethod = "GRPC"
 )
 
-// RuntimeAssertionConfig 保存运行时 actor assertion 的签发上下文。
-// operation、path、body 和幂等键由具体 RPC 按冻结契约生成，调用方不能覆盖。
+// RuntimeAssertionConfig holds the signing context for runtime actor
+// assertions. Each RPC generates operation, path, body, and idempotency-key
+// values according to the frozen contract; callers cannot override them.
 type RuntimeAssertionConfig struct {
 	Signer     Signer
 	InstanceID string
@@ -60,18 +72,18 @@ type RuntimeAssertionConfig struct {
 	SessionID  string
 }
 
-// RuntimeClientOption 配置 RuntimeClient 的本地行为。
+// RuntimeClientOption configures local RuntimeClient behavior.
 type RuntimeClientOption func(*RuntimeClient)
 
-// WithRuntimeAssertionConfig 注入五个需要 actor assertion 的 RPC 所共用的
-// signer 和 token-bound identity context。
+// WithRuntimeAssertionConfig supplies the signer and token-bound identity
+// context shared by the five RPCs that require actor assertions.
 func WithRuntimeAssertionConfig(config RuntimeAssertionConfig) RuntimeClientOption {
 	return func(client *RuntimeClient) {
 		client.assertion = config
 	}
 }
 
-// WithRuntimeAssertion 是 WithRuntimeAssertionConfig 的便捷形式。
+// WithRuntimeAssertion is a convenience form of WithRuntimeAssertionConfig.
 func WithRuntimeAssertion(signer Signer, instanceID, tenantID, sessionID string) RuntimeClientOption {
 	return WithRuntimeAssertionConfig(RuntimeAssertionConfig{
 		Signer:     signer,
@@ -81,18 +93,19 @@ func WithRuntimeAssertion(signer Signer, instanceID, tenantID, sessionID string)
 	})
 }
 
-// RuntimeClient 是 runtime.v1.RuntimeService 的类型化控制面封装。
-// ExchangeRuntimeToken 不在此 client 中：它由 GRPCTokenSource 通过 mTLS
-// bootstrap 承载。ResolveRegistration 与其余无 assertion 的 RPC 一样，均
-// 通过 AuthenticatedClient 发送 Bearer 并保留 SDK-002 的一次稳定未认证刷新重试。
+// RuntimeClient is the typed control-plane wrapper for runtime.v1.RuntimeService.
+// ExchangeRuntimeToken is not part of this client; GRPCTokenSource performs it
+// through the mTLS bootstrap. Like the other RPCs without assertions,
+// ResolveRegistration uses AuthenticatedClient to send a Bearer token and
+// retains the single refresh retry for the stable unauthenticated code.
 type RuntimeClient struct {
 	connection    grpc.ClientConnInterface
 	authenticated *AuthenticatedClient
 	assertion     RuntimeAssertionConfig
 }
 
-// NewRuntimeClient 构造 runtime 控制面 client。tokens 用于所有需要 Bearer
-// 的 RPC，包括 ResolveRegistration。
+// NewRuntimeClient constructs a runtime control-plane client. tokens is used by
+// every RPC that requires a Bearer token, including ResolveRegistration.
 func NewRuntimeClient(connection grpc.ClientConnInterface, tokens TokenSource, options ...RuntimeClientOption) *RuntimeClient {
 	client := &RuntimeClient{
 		connection:    connection,
@@ -106,9 +119,10 @@ func NewRuntimeClient(connection grpc.ClientConnInterface, tokens TokenSource, o
 	return client
 }
 
-// RuntimeRPCError 保留底层 gRPC 错误，同时把服务端稳定 code 和 retryable
-// 语义暴露给调用方。服务端 status code 已正确设置时保持原值；对冻结的
-// 稳定 code 也提供契约规定的 status 映射。
+// RuntimeRPCError preserves the underlying gRPC error while exposing the
+// server's stable code and retryable semantics. It keeps an existing server
+// status code and applies the contract's status mapping for frozen stable
+// codes when necessary.
 type RuntimeRPCError struct {
 	cause      error
 	stableCode string
@@ -116,6 +130,8 @@ type RuntimeRPCError struct {
 	statusCode codes.Code
 }
 
+// Error returns the underlying gRPC error message, or an empty string for a
+// nil receiver or a wrapper without an underlying error.
 func (err *RuntimeRPCError) Error() string {
 	if err == nil || err.cause == nil {
 		return ""
@@ -123,6 +139,8 @@ func (err *RuntimeRPCError) Error() string {
 	return err.cause.Error()
 }
 
+// Unwrap returns the underlying gRPC error so errors.Is and errors.As can
+// inspect the original cause. It returns nil for a nil receiver.
 func (err *RuntimeRPCError) Unwrap() error {
 	if err == nil {
 		return nil
@@ -130,8 +148,8 @@ func (err *RuntimeRPCError) Unwrap() error {
 	return err.cause
 }
 
-// ErrorCode implements ErrorCodeProvider without changing errors.go's frozen
-// SDK-002 implementation。
+// ErrorCode implements ErrorCodeProvider without changing the frozen
+// ErrorCode implementation in errors.go.
 func (err *RuntimeRPCError) ErrorCode() string {
 	if err == nil {
 		return ""
@@ -139,14 +157,14 @@ func (err *RuntimeRPCError) ErrorCode() string {
 	return err.stableCode
 }
 
-// Retryable reports the frozen retryability of the returned runtime error。
-// RuntimeClient itself does not retry registration_unavailable。
+// Retryable reports the frozen retryability of the returned runtime error.
+// RuntimeClient itself does not retry registration_unavailable.
 func (err *RuntimeRPCError) Retryable() bool {
 	return err != nil && err.retryable
 }
 
 // GRPCStatus keeps status.Code and status.Convert useful after the stable-code
-// wrapper is applied。
+// wrapper is applied.
 func (err *RuntimeRPCError) GRPCStatus() *status.Status {
 	if err == nil || err.cause == nil {
 		return status.New(codes.Unknown, "runtime RPC failed")
@@ -155,15 +173,21 @@ func (err *RuntimeRPCError) GRPCStatus() *status.Status {
 	return status.New(err.statusCode, message)
 }
 
-// ResolveRegistration 使用已认证的 mTLS + Bearer 实例 scope 解析注册 intent。
-// request.Domain 是前端提供的字符串；SDK 将它原样放在 protobuf request 中，
-// 不从 Host、Origin 或配置推导、规范化或补全。request.InviteCode 仅是渠道标识。
-// 邀请码在本站不可用时，传输边界只返回 RuntimeRegistrationCodeInvalid；邀请码曾经可用
-// 但当前不能再用时，只返回 RuntimeRegistrationCodeExpired。中枢内部的 not_found、
-// merchant_mismatch 等原因不会在 SDK 传输边界中继续细分；两者都是调用方输入错误，不可重试。
+// ResolveRegistration resolves a registration intent in the authenticated
+// mTLS and Bearer instance scope. request.Domain is a string supplied by the
+// frontend; the SDK puts it in the protobuf request unchanged and does not
+// derive, normalize, or complete it from Host, Origin, or configuration.
+// request.InviteCode is only a channel identifier. An invite code that is not
+// usable at the site is exposed at the transport boundary only as
+// RuntimeRegistrationCodeInvalid; one that was usable but can no longer be
+// used is exposed only as RuntimeRegistrationCodeExpired. Internal not_found
+// and merchant_mismatch causes are not further distinguished at the SDK
+// transport boundary because both are caller input errors and are not
+// retryable.
 //
-// registration_unavailable 的服务端响应应在外部 2 秒总预算内最多重试一次；
-// SDK 不内建该重试。
+// An external caller should retry a server response with
+// registration_unavailable at most once within a total two-second budget; the
+// SDK does not implement that retry itself.
 func (client *RuntimeClient) ResolveRegistration(ctx context.Context, request *runtimepb.ResolveRegistrationRequest, options ...grpc.CallOption) (*runtimepb.RegistrationIntent, error) {
 	if request == nil {
 		return nil, fmt.Errorf("resolve registration request is nil")
@@ -181,9 +205,11 @@ func (client *RuntimeClient) ResolveRegistration(ctx context.Context, request *r
 	return reply, nil
 }
 
-// ConfirmRegistration 以 intent 的 fingerprint 生成固定 JCS body。intent
-// token 只留在 protobuf request，不进入 assertion fingerprint；actor 自身
-// 是本 RPC 的幂等键例外，且按契约允许最多 256 bytes 的 UTF-8。
+// ConfirmRegistration builds the fixed JCS assertion body from the intent's
+// fingerprint. The intent token remains only in the protobuf request and does
+// not enter the assertion fingerprint. The actor itself is the idempotency-key
+// exception for this RPC and is allowed to contain up to 256 bytes of UTF-8
+// under the contract.
 func (client *RuntimeClient) ConfirmRegistration(ctx context.Context, request *runtimepb.ConfirmRegistrationRequest, intent *runtimepb.RegistrationIntent, options ...grpc.CallOption) (*runtimepb.RegistrationReply, error) {
 	if request == nil {
 		return nil, fmt.Errorf("confirm registration request is nil")
@@ -216,8 +242,11 @@ func (client *RuntimeClient) ConfirmRegistration(ctx context.Context, request *r
 	return reply, nil
 }
 
-// CreateOrder 冻结 offer_price_id，并以 idempotency_key 保护一次订单创建。
-// 价格金额由生成类型以 string 原样传递，SDK 不解析或重格式化。
+// CreateOrder binds offer_price_id into the signed request fingerprint and
+// protects one order creation with idempotency_key. It does not modify the
+// price identifier; binding means the assertion covers exactly the offer price
+// this call was made against. Generated price amounts are carried as strings
+// without SDK parsing or reformatting.
 func (client *RuntimeClient) CreateOrder(ctx context.Context, request *runtimepb.CreateOrderRequest, options ...grpc.CallOption) (*runtimepb.CreateOrderReply, error) {
 	if request == nil {
 		return nil, fmt.Errorf("create order request is nil")
@@ -253,8 +282,9 @@ func (client *RuntimeClient) CreateOrder(ctx context.Context, request *runtimepb
 	return reply, nil
 }
 
-// VerifyAndConfirmPayment 原样转交支付证明。SDK 不解析 signed_payload、
-// signed_headers 或 provider_query_ref，也不提供“标记已支付”的语义。
+// VerifyAndConfirmPayment passes the payment proof through unchanged. The SDK
+// does not parse signed_payload, signed_headers, or provider_query_ref, and it
+// does not provide a "mark as paid" semantic.
 func (client *RuntimeClient) VerifyAndConfirmPayment(ctx context.Context, request *runtimepb.VerifyAndConfirmPaymentRequest, options ...grpc.CallOption) (*runtimepb.VerifyAndConfirmPaymentReply, error) {
 	if request == nil {
 		return nil, fmt.Errorf("verify and confirm payment request is nil")
@@ -269,7 +299,8 @@ func (client *RuntimeClient) VerifyAndConfirmPayment(ctx context.Context, reques
 	return reply, nil
 }
 
-// GetOrder 使用固定 body {"order_id":"..."} 生成 query assertion。
+// GetOrder creates a query assertion with the fixed body
+// {"order_id":"..."}.
 func (client *RuntimeClient) GetOrder(ctx context.Context, request *runtimepb.GetOrderRequest, options ...grpc.CallOption) (*runtimepb.GetOrderReply, error) {
 	if request == nil {
 		return nil, fmt.Errorf("get order request is nil")
@@ -302,8 +333,9 @@ func (client *RuntimeClient) GetOrder(ctx context.Context, request *runtimepb.Ge
 	return reply, nil
 }
 
-// SyncIdentity 发送 instance-scoped identity lifecycle 事件。event_id 的
-// 唯一空间由三个 identity RPC 共享；SDK 只校验制式，不做跨 RPC 查重。
+// SyncIdentity sends an instance-scoped identity lifecycle event. The three
+// identity RPCs share one event_id namespace; the SDK validates the format but
+// does not deduplicate across RPCs.
 func (client *RuntimeClient) SyncIdentity(ctx context.Context, request *runtimepb.SyncIdentityRequest, options ...grpc.CallOption) (*runtimepb.IdentityReply, error) {
 	if request == nil {
 		return nil, fmt.Errorf("sync identity request is nil")
@@ -321,9 +353,9 @@ func (client *RuntimeClient) SyncIdentity(ctx context.Context, request *runtimep
 	return reply, nil
 }
 
-// SyncVerificationStatus 只允许 proto 冻结的 verified、verified_at_ms、
-// credential_ref、issuer 载荷；不存在 PII 入口。credential_ref 与 issuer
-// 在客户端做 ASCII 制式校验。
+// SyncVerificationStatus accepts only the proto-frozen verified, verified_at_ms,
+// credential_ref, and issuer payload. It has no PII input. The client validates
+// the ASCII format of credential_ref and issuer.
 func (client *RuntimeClient) SyncVerificationStatus(ctx context.Context, request *runtimepb.SyncVerificationStatusRequest, options ...grpc.CallOption) (*runtimepb.IdentityReply, error) {
 	if request == nil {
 		return nil, fmt.Errorf("sync verification status request is nil")
@@ -347,7 +379,7 @@ func (client *RuntimeClient) SyncVerificationStatus(ctx context.Context, request
 	return reply, nil
 }
 
-// DisableIdentity 发送 instance-scoped disabled 事件。
+// DisableIdentity sends an instance-scoped disabled event.
 func (client *RuntimeClient) DisableIdentity(ctx context.Context, request *runtimepb.DisableIdentityRequest, options ...grpc.CallOption) (*runtimepb.IdentityReply, error) {
 	if request == nil {
 		return nil, fmt.Errorf("disable identity request is nil")
@@ -365,7 +397,7 @@ func (client *RuntimeClient) DisableIdentity(ctx context.Context, request *runti
 	return reply, nil
 }
 
-// GetBalance 使用空 JSON body 和 strict-nonce balance:get assertion。
+// GetBalance uses an empty JSON body and a strict-nonce balance:get assertion.
 func (client *RuntimeClient) GetBalance(ctx context.Context, request *runtimepb.GetBalanceRequest, options ...grpc.CallOption) (*runtimepb.BalanceReply, error) {
 	if request == nil {
 		return nil, fmt.Errorf("get balance request is nil")
@@ -390,8 +422,9 @@ func (client *RuntimeClient) GetBalance(ctx context.Context, request *runtimepb.
 	return reply, nil
 }
 
-// ListLedger 透传不透明 page_cursor，page_size=0 保持服务端默认 50，显式值
-// 只允许 1-100；strict nonce body 使用请求中的原始 page_size。
+// ListLedger passes through the opaque page_cursor. page_size=0 preserves the
+// server default of 50; an explicit value must be 1-100. The strict-nonce body
+// uses the request's original page_size.
 func (client *RuntimeClient) ListLedger(ctx context.Context, request *runtimepb.ListLedgerRequest, options ...grpc.CallOption) (*runtimepb.LedgerReply, error) {
 	if request == nil {
 		return nil, fmt.Errorf("list ledger request is nil")
@@ -423,7 +456,8 @@ func (client *RuntimeClient) ListLedger(ctx context.Context, request *runtimepb.
 	return reply, nil
 }
 
-// GetSkuCatalog 请求空 protobuf message，使用 Bearer 但不生成 assertion。
+// GetSkuCatalog sends an empty protobuf message with a Bearer token and does
+// not generate an assertion.
 func (client *RuntimeClient) GetSkuCatalog(ctx context.Context, options ...grpc.CallOption) (*runtimepb.SkuCatalogReply, error) {
 	reply := new(runtimepb.SkuCatalogReply)
 	request := &runtimepb.GetSkuCatalogRequest{}
@@ -433,7 +467,8 @@ func (client *RuntimeClient) GetSkuCatalog(ctx context.Context, options ...grpc.
 	return reply, nil
 }
 
-// GetOfferCatalog 请求空 protobuf message，使用 Bearer 但不生成 assertion。
+// GetOfferCatalog sends an empty protobuf message with a Bearer token and does
+// not generate an assertion.
 func (client *RuntimeClient) GetOfferCatalog(ctx context.Context, options ...grpc.CallOption) (*runtimepb.OfferCatalogReply, error) {
 	reply := new(runtimepb.OfferCatalogReply)
 	request := &runtimepb.GetOfferCatalogRequest{}
@@ -443,11 +478,13 @@ func (client *RuntimeClient) GetOfferCatalog(ctx context.Context, options ...grp
 	return reply, nil
 }
 
-// ListSiteBranding 请求空 protobuf message，使用 Bearer 但不生成 assertion。
+// ListSiteBranding sends an empty protobuf message with a Bearer token and does
+// not generate an assertion.
 //
-// 它是实例级查询（返回本实例全部站点的品牌引用），契约上不携带 actor assertion，
-// 因此与两个 catalog 同型：登记进 runtimeMethods 与 runtimeQueryMethods，
-// 但不进 runtimeAssertionOperations。
+// It is an instance-level query that returns brand references for all sites in
+// the instance. The contract carries no actor assertion, so it has the same
+// shape as the two catalog methods: it is registered in runtimeMethods and
+// runtimeQueryMethods, but not in runtimeAssertionOperations.
 func (client *RuntimeClient) ListSiteBranding(ctx context.Context, options ...grpc.CallOption) (*runtimepb.ListSiteBrandingReply, error) {
 	reply := new(runtimepb.ListSiteBrandingReply)
 	request := &runtimepb.ListSiteBrandingRequest{}

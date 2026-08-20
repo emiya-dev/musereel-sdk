@@ -98,14 +98,23 @@ func (token Token) usableAt(now time.Time) bool {
 	return !token.accessToken.isEmpty() && now.Before(token.expiresAt.Add(-refreshBefore))
 }
 
+// String returns the fixed "[REDACTED]" placeholder instead of the access
+// token.
 func (token Token) String() string { return redactedText }
 
+// GoString returns the fixed "[REDACTED]" placeholder for %#v formatting
+// instead of the access token.
 func (token Token) GoString() string { return redactedText }
 
+// Format writes the fixed "[REDACTED]" placeholder for every formatting verb,
+// so formatting cannot expose the access token.
 func (token Token) Format(state fmt.State, verb rune) {
 	_, _ = state.Write([]byte(redactedText))
 }
 
+// MarshalJSON encodes token metadata while replacing AccessToken with the
+// fixed "[REDACTED]" placeholder. RequestID is omitted when empty, and the
+// token type and expiry are retained.
 func (token Token) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct {
 		AccessToken string    `json:"access_token"`

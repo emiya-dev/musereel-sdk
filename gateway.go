@@ -21,8 +21,9 @@ import (
 	"github.com/emiya-dev/musereel-sdk/jcs"
 )
 
-// GatewayDeliveryMode 由 Gateway 侧 SKU 目录决定。SDK 提供分开的调用方法，
-// delivery_mode 不会进入请求体，也不会被 SDK 静默覆盖。
+// GatewayDeliveryMode is determined by the Gateway-side SKU catalog. The SDK
+// exposes separate methods for the delivery modes; delivery_mode is not put in
+// the request body and is never silently overridden by the SDK.
 type GatewayDeliveryMode string
 
 const (
@@ -30,7 +31,8 @@ const (
 	GatewayDeliveryAsync  GatewayDeliveryMode = "async"
 )
 
-// GatewayInvocationState 是封闭的 snapshot state 集合。
+// GatewayInvocationState is the closed set of states used by invocation
+// snapshots.
 type GatewayInvocationState string
 
 const (
@@ -44,10 +46,12 @@ const (
 	GatewayStateCancelled           GatewayInvocationState = "cancelled"
 )
 
-// GatewayActorFunc 在请求时提供 actor。每个逻辑请求只解析一次，token 刷新重试沿用同一值。
+// GatewayActorFunc supplies the actor at request time. It is resolved once per
+// logical request, and a token-refresh retry reuses the same value.
 type GatewayActorFunc func(context.Context) (string, error)
 
-// GatewayIdentity 是既有 SignAssertion 实现所需的、与 token 绑定的身份上下文。
+// GatewayIdentity is the token-bound identity context required by
+// SignAssertion for Gateway requests.
 type GatewayIdentity struct {
 	InstanceID string
 	TenantID   string
@@ -56,17 +60,19 @@ type GatewayIdentity struct {
 	ActorFunc  GatewayActorFunc
 }
 
-// GatewayInvocationSpec 是冻结的 spec 对象。Input 和 Parameters 使用 interface，
-// 调用方可传 json.RawMessage 或普通 Go JSON 值；Validate 拒绝其中**无法被规范化**
-// 的 JSON 数值（小数、指数、超出 int64），整数一律放行。
+// GatewayInvocationSpec is the frozen spec object. Input and Parameters use
+// interface values, so callers may provide json.RawMessage or ordinary Go JSON
+// values. Validate rejects JSON numbers that cannot be canonicalized
+// (fractions, exponent notation, or values outside int64); integer forms are
+// accepted.
 type GatewayInvocationSpec struct {
 	SchemaVersion string `json:"schema_version"`
 	Input         any    `json:"input"`
 	Parameters    any    `json:"parameters"`
 }
 
-// GatewayCreateRequest 恰好包含 create body 的四个字段，不包含 delivery_mode；
-// 交付方式属于 SKU 目录属性。
+// GatewayCreateRequest contains exactly the four create-body fields and does
+// not contain delivery_mode; the delivery mode is a SKU catalog attribute.
 type GatewayCreateRequest struct {
 	SKU               string                `json:"sku_id"`
 	TaskRef           string                `json:"task_ref"`
@@ -74,7 +80,8 @@ type GatewayCreateRequest struct {
 	ModerationReceipt string                `json:"moderation_receipt"`
 }
 
-// Validate 在创建 token 或 assertion 前校验请求形状。
+// Validate checks the request shape before the SDK creates a token or
+// assertion for the request.
 func (request GatewayCreateRequest) Validate() error {
 	if strings.TrimSpace(request.SKU) == "" || strings.TrimSpace(request.TaskRef) == "" {
 		return fmt.Errorf("create request requires sku_id and task_ref")
@@ -102,14 +109,16 @@ func (request GatewayCreateRequest) Validate() error {
 	return nil
 }
 
-// GatewayInvocationSnapshot 由 async create、GET、cancel 共用。Result 和 LotDeductions
-// 保持 raw JSON，SDK 不会把 units 或类似金额的值转成浮点数。
+// GatewayInvocationSnapshot is shared by async create, GET, and cancel
+// responses. Result and LotDeductions remain raw JSON; the SDK does not convert
+// units or similar amount-like values to floating-point numbers.
 type GatewayInvocationSnapshot struct {
 	ID string `json:"id"`
-	// Version 是 int64：服务端 respond.go 与 06 契约示例（"version": 1）都是 JSON 数字。
-	// 这里曾声明成 string，导致 SDK 对真 gateway 的**每一个** snapshot 都解码失败
-	// （async create 202 / GET 200 / cancel 全线折叠为协议错误）——而 SDK 自己的
-	// fixture 用 %q 发带引号的字符串，测试因此反过来认证了这个错误假设。
+	// Version is int64 because the server's respond.go and the 06 contract
+	// example ("version": 1) both encode it as a JSON number. Declaring it a string
+	// made every real Gateway snapshot fail to decode (async create 202, GET 200,
+	// and cancel all became protocol errors); the SDK fixtures once sent a quoted
+	// value and therefore incorrectly reinforced that assumption.
 	Version       int64                  `json:"version"`
 	State         GatewayInvocationState `json:"state"`
 	Terminal      bool                   `json:"terminal"`
@@ -124,8 +133,9 @@ type GatewayInvocationSnapshot struct {
 	LotDeductions json.RawMessage        `json:"lot_deductions"`
 }
 
-// GatewayCreateResponse 由两种 create 模式共用。303 用 AlreadyExists=true、
-// InvocationID 有值且 error=nil 表示；Stream 由调用方持有并负责关闭。
+// GatewayCreateResponse is shared by both create modes. A 303 response is
+// represented by AlreadyExists=true and a non-empty InvocationID with a nil
+// error; for stream mode, the caller owns and must close Stream.
 type GatewayCreateResponse struct {
 	StatusCode    int
 	RequestID     string
@@ -136,7 +146,8 @@ type GatewayCreateResponse struct {
 	Stream        *GatewaySSEStream
 }
 
-// GatewayGetResponse 包含新 snapshot 或 304 结果；ETag 和 RetryAfter 是 GatewayPoller 使用的元数据。
+// GatewayGetResponse contains either a new snapshot or a 304 result. ETag and
+// RetryAfter are metadata used by GatewayPoller.
 type GatewayGetResponse struct {
 	StatusCode  int
 	RequestID   string
@@ -146,7 +157,8 @@ type GatewayGetResponse struct {
 	RetryAfter  time.Duration
 }
 
-// GatewayCancelResponse 表示新接受的取消意图（202）或当前 snapshot（200）。
+// GatewayCancelResponse represents either a newly accepted cancellation intent
+// (202) or the current snapshot (200).
 type GatewayCancelResponse struct {
 	StatusCode   int
 	RequestID    string
@@ -159,10 +171,11 @@ type gatewayClientConfig struct {
 	now Clock
 }
 
-// GatewayClientOption 只定制 SDK 本地行为。
+// GatewayClientOption customizes SDK-local behavior only.
 type GatewayClientOption func(*gatewayClientConfig)
 
-// WithGatewayClock 注入 assertion 签发和轮询元数据测试使用的时钟，不改变最多 60 秒的 wire TTL。
+// WithGatewayClock injects the clock used for assertion issuance and polling
+// metadata tests. It does not change the maximum 60-second wire TTL.
 func WithGatewayClock(now Clock) GatewayClientOption {
 	return func(config *gatewayClientConfig) {
 		if now != nil {
@@ -171,7 +184,7 @@ func WithGatewayClock(now Clock) GatewayClientOption {
 	}
 }
 
-// GatewayClient 封装四条带认证的 invocation 路由。
+// GatewayClient wraps the four authenticated Gateway invocation routes.
 type GatewayClient struct {
 	baseURL    *url.URL
 	tokens     TokenSource
@@ -181,8 +194,9 @@ type GatewayClient struct {
 	now        Clock
 }
 
-// NewGatewayClient 构造带认证的 Gateway HTTP 客户端。调用方传入 NewTLSConfig
-// 产出的 TLS 配置，以及 SDK 其余部分共用的 token 和 signer 抽象。
+// NewGatewayClient constructs an authenticated Gateway HTTP client. Callers
+// provide TLS configuration from NewTLSConfig and the token and signer
+// abstractions shared by the rest of the SDK.
 func NewGatewayClient(baseURL string, tlsConfig *tls.Config, tokens TokenSource, signer Signer, identity GatewayIdentity, options ...GatewayClientOption) (*GatewayClient, error) {
 	parsedURL, err := parseGatewayBaseURL(baseURL)
 	if err != nil {
@@ -213,12 +227,12 @@ func NewGatewayClient(baseURL string, tlsConfig *tls.Config, tokens TokenSource,
 	}, nil
 }
 
-// CreateStream 发送 stream 模式 create 请求并返回 SSE 流。
+// CreateStream sends a stream-mode create request and returns its SSE stream.
 func (client *GatewayClient) CreateStream(ctx context.Context, request GatewayCreateRequest, idempotencyKey string) (GatewayCreateResponse, error) {
 	return client.create(ctx, request, idempotencyKey, GatewayDeliveryStream)
 }
 
-// CreateAsync 发送 async 模式 create 请求并返回 snapshot。
+// CreateAsync sends an async-mode create request and returns its snapshot.
 func (client *GatewayClient) CreateAsync(ctx context.Context, request GatewayCreateRequest, idempotencyKey string) (GatewayCreateResponse, error) {
 	return client.create(ctx, request, idempotencyKey, GatewayDeliveryAsync)
 }
@@ -323,19 +337,22 @@ func (client *GatewayClient) create(ctx context.Context, request GatewayCreateRe
 	}, nil
 }
 
-// Get 不带幂等键获取当前 snapshot。
+// Get retrieves the current snapshot without an idempotency key.
 //
-// ⚠ 本方法**不是**死代码，SDK-013 对账一度把它划进「从没被调用过」那一类是误判：
-// sluice 的接入彩排模块（`test/rehearsal`，独立 go module，按兄弟目录
-// `replace` 到本仓）有两处真实调用——`golden/golden_test.go` 与
-// `golden/completed_test.go`——而那个模块由 sluice 的 `ci.sh full` harness 腿编译并运行。
-// 删掉它不会让本仓任何门禁变红，只会让**另一个仓**的门禁编译失败。
-// 判据因此与那 16 条「只被测试/探针触达」的符号同类：有消费者，保留。
+// This method is intentionally not dead code. An SDK-013 reconciliation
+// review once misclassified it as unused: Sluice's integration rehearsal
+// module (test/rehearsal, a separate Go module that replaces this repository
+// through a sibling directory) has real call sites in golden/golden_test.go and
+// golden/completed_test.go, and Sluice's ci.sh full harness compiles and runs
+// that module. Removing Get would not fail this repository's own gates, but it
+// would make another repository's gate fail to compile. It therefore remains
+// public because it has a consumer.
 func (client *GatewayClient) Get(ctx context.Context, invocationID string) (GatewayGetResponse, error) {
 	return client.GetWithETag(ctx, invocationID, "")
 }
 
-// GetWithETag 在 etag 非空时发送 If-None-Match；304 以 NotModified=true 返回，而非错误。
+// GetWithETag sends If-None-Match when etag is non-empty. A 304 response is
+// returned with NotModified=true rather than as an error.
 func (client *GatewayClient) GetWithETag(ctx context.Context, invocationID, etag string) (GatewayGetResponse, error) {
 	if client == nil {
 		return GatewayGetResponse{}, fmt.Errorf("gateway client is not configured")
@@ -393,7 +410,8 @@ func (client *GatewayClient) GetWithETag(ctx context.Context, invocationID, etag
 	}, nil
 }
 
-// GatewayPoller 维护 ETag，并在下一次 GET 前等待服务端 Retry-After；SSE 断线后不会 POST 或 DELETE。
+// GatewayPoller maintains the ETag and waits for the server's Retry-After
+// before the next GET. An SSE disconnect does not cause it to POST or DELETE.
 type GatewayPoller struct {
 	client       *GatewayClient
 	invocationID string
@@ -403,7 +421,7 @@ type GatewayPoller struct {
 	nextPoll time.Time
 }
 
-// NewPoller 为一个 invocation 创建带 ETag 的轮询器。
+// NewPoller creates an ETag-aware poller for an invocation.
 func (client *GatewayClient) NewPoller(invocationID string) (*GatewayPoller, error) {
 	if client == nil {
 		return nil, fmt.Errorf("gateway client is not configured")
@@ -414,7 +432,9 @@ func (client *GatewayClient) NewPoller(invocationID string) (*GatewayPoller, err
 	return &GatewayPoller{client: client, invocationID: invocationID}, nil
 }
 
-// Poll 执行一次 GET，遵守上次 Retry-After 并更新 ETag。
+// Poll performs one GET and updates the ETag. It first blocks until the
+// previous response's Retry-After has elapsed, so a caller in a loop does not
+// need to sleep itself.
 func (poller *GatewayPoller) Poll(ctx context.Context) (GatewayGetResponse, error) {
 	if poller == nil || poller.client == nil {
 		return GatewayGetResponse{}, fmt.Errorf("gateway poller is not configured")
@@ -450,7 +470,7 @@ func (poller *GatewayPoller) Poll(ctx context.Context) (GatewayGetResponse, erro
 	return response, nil
 }
 
-// ETag 返回轮询器当前的 validator。
+// ETag returns the poller's current validator.
 func (poller *GatewayPoller) ETag() string {
 	if poller == nil {
 		return ""
@@ -460,7 +480,7 @@ func (poller *GatewayPoller) ETag() string {
 	return poller.etag
 }
 
-// DownloadArtifact 在向 dst 写入任何字节前校验 Content-Digest。
+// DownloadArtifact verifies Content-Digest before writing any bytes to dst.
 func (client *GatewayClient) DownloadArtifact(ctx context.Context, invocationID, artifactID string, dst io.Writer) error {
 	if client == nil {
 		return fmt.Errorf("gateway client is not configured")
@@ -498,7 +518,7 @@ func (client *GatewayClient) DownloadArtifact(ctx context.Context, invocationID,
 	return err
 }
 
-// Cancel 使用调用方持有的幂等键发送无 body 的 DELETE。
+// Cancel sends a bodyless DELETE using the idempotency key held by the caller.
 func (client *GatewayClient) Cancel(ctx context.Context, invocationID, idempotencyKey string) (GatewayCancelResponse, error) {
 	if client == nil {
 		return GatewayCancelResponse{}, fmt.Errorf("gateway client is not configured")
