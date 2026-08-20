@@ -283,17 +283,30 @@ func (client *GatewayClient) create(ctx context.Context, request GatewayCreateRe
 		}, nil
 	}
 
-	if response.StatusCode != http.StatusAccepted || !gatewayMediaType(response, "application/json") {
+	if response.StatusCode != http.StatusAccepted {
 		response.Body.Close()
+		return GatewayCreateResponse{}, newGatewayProtocolError(response.StatusCode)
+	}
+	location := response.Header.Get("Location")
+	locationID, locationErr := client.invocationIDFromLocation(location)
+	if !gatewayMediaType(response, "application/json") {
+		response.Body.Close()
+		if locationErr == nil {
+			return GatewayCreateResponse{}, newGatewayProtocolErrorWithInvocationID(response.StatusCode, locationID)
+		}
 		return GatewayCreateResponse{}, newGatewayProtocolError(response.StatusCode)
 	}
 	requestID, snapshot, err := decodeGatewaySnapshotResponse(response)
 	if err != nil {
+		if gatewayErr, ok := err.(*GatewayError); ok && locationErr == nil {
+			gatewayErr.InvocationID = locationID
+		}
 		return GatewayCreateResponse{}, err
 	}
-	location := response.Header.Get("Location")
-	locationID, locationErr := client.invocationIDFromLocation(location)
 	if locationErr != nil || locationID != snapshot.ID {
+		if locationErr == nil {
+			return GatewayCreateResponse{}, newGatewayProtocolErrorWithInvocationID(response.StatusCode, locationID)
+		}
 		return GatewayCreateResponse{}, newGatewayProtocolError(response.StatusCode)
 	}
 	return GatewayCreateResponse{

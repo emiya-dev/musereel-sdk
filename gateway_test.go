@@ -186,6 +186,54 @@ func TestGatewayCreateAsyncUsesFrozenHeadersAndFingerprint(t *testing.T) {
 	}
 }
 
+func TestGatewayCreateAsyncProtocolErrorsRetainLocationInvocationID(t *testing.T) {
+	for _, testCase := range []struct {
+		name     string
+		location string
+		body     []byte
+		wantID   string
+	}{
+		{
+			name:     "bad snapshot body with Location",
+			location: "/runtime/v1/invocations/inv-from-location",
+			body:     []byte("not-json"),
+			wantID:   "inv-from-location",
+		},
+		{
+			name:     "snapshot ID mismatch with Location",
+			location: "/runtime/v1/invocations/inv-from-location",
+			body:     validGatewaySnapshotBody("inv-from-body", 1, string(GatewayStateAccepted), false),
+			wantID:   "inv-from-location",
+		},
+		{
+			name:   "bad snapshot body without Location",
+			body:   []byte("not-json"),
+			wantID: "",
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			client, _, _, _ := newGatewayTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+				if testCase.location != "" {
+					w.Header().Set("Location", testCase.location)
+				}
+				writeGatewayJSON(w, http.StatusAccepted, testCase.body)
+			}))
+
+			_, err := client.CreateAsync(context.Background(), validGatewayCreateRequest(), "create-key-123456")
+			if err == nil {
+				t.Fatal("CreateAsync unexpectedly succeeded")
+			}
+			var gatewayErr *GatewayError
+			if !errors.As(err, &gatewayErr) {
+				t.Fatalf("error = %T %v, want *GatewayError", err, err)
+			}
+			if gatewayErr.InvocationID != testCase.wantID {
+				t.Fatalf("InvocationID = %q, want %q; error = %#v", gatewayErr.InvocationID, testCase.wantID, gatewayErr)
+			}
+		})
+	}
+}
+
 func TestGateway303IsExposedWithoutFollowingGET(t *testing.T) {
 	var requests atomic.Int32
 	client, _, _, _ := newGatewayTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
@@ -404,13 +452,69 @@ func TestGatewayRetryableTableAndWireMismatch(t *testing.T) {
 			t.Errorf("RetryableGatewayCode(%q) = %t, want %t", entry.code, got, entry.retryable)
 		}
 	}
-	body := []byte(`{"request_id":"req-err","error":{"code":"rate_limited","message":"diagnostic","retryable":false,"retry_after_ms":1200,"details":{"invocation_id":"inv-01"}}}`)
-	err := gatewayErrorFromBytes(body, http.StatusTooManyRequests, isGatewayInvocationErrorCode)
-	if err.Code != GatewayRateLimited || err.Retryable || !err.RetryableByCode() || err.RetryAfterMS == nil || *err.RetryAfterMS != 1200 || err.InvocationID != "inv-01" {
-		t.Fatalf("wire mismatch error = %#v", err)
+
+	for _, testCase := range []struct {
+		name          string
+		code          string
+		status        int
+		wireRetryable bool
+		fromWire      bool
+		wantRetryable bool
+	}{
+		{name: "wire internal_error false", code: GatewayInternalError, status: http.StatusInternalServerError, wireRetryable: false, fromWire: true, wantRetryable: false},
+		{name: "wire internal_error true", code: GatewayInternalError, status: http.StatusInternalServerError, wireRetryable: true, fromWire: true, wantRetryable: true},
+		{name: "wire rate_limited false stays table true", code: GatewayRateLimited, status: http.StatusTooManyRequests, wireRetryable: false, fromWire: true, wantRetryable: true},
+		{name: "SDK internal_error without wire stays conservative", code: GatewayInternalError, wantRetryable: true},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			var err *GatewayError
+			if testCase.fromWire {
+				body := []byte(fmt.Sprintf(`{"request_id":"req-err","error":{"code":%q,"message":"diagnostic","retryable":%t,"retry_after_ms":1200,"details":{"invocation_id":"inv-01"}}}`,
+					testCase.code, testCase.wireRetryable))
+				err = gatewayErrorFromBytes(body, testCase.status, isGatewayInvocationErrorCode)
+				if err.Code != testCase.code || err.Retryable != testCase.wireRetryable || err.RetryAfterMS == nil || *err.RetryAfterMS != 1200 || err.InvocationID != "inv-01" {
+					t.Fatalf("wire error = %#v", err)
+				}
+				if got := err.Error(); strings.Contains(got, "diagnostic") || strings.Contains(got, "1200") {
+					t.Fatalf("error string used unstable diagnostic data: %q", got)
+				}
+			} else {
+				err = newGatewayError(GatewayInternalError, 0, "", "transport failure")
+			}
+			if got := err.RetryableByCode(); got != testCase.wantRetryable {
+				t.Fatalf("RetryableByCode() = %t, want %t; error = %#v", got, testCase.wantRetryable, err)
+			}
+			if got := err.IsRetryable(); got != testCase.wantRetryable {
+				t.Fatalf("IsRetryable() = %t, want %t; error = %#v", got, testCase.wantRetryable, err)
+			}
+		})
 	}
-	if got := err.Error(); strings.Contains(got, "diagnostic") || strings.Contains(got, "1200") {
-		t.Fatalf("error string used unstable diagnostic data: %q", got)
+}
+
+// 第五象限：wire 给了 internal_error 但**根本没带** retryable 字段。
+// 这一格不能落成 bool 零值 false —— 06:611-619 对未登记内部码的缺省是保守可重试，
+// 判成不可重试会让调用方对一个瞬时内部错过早放弃。上面那张表覆盖不到它：
+// 表里每一行都显式写了 retryable，缺字段与「显式 false」在解出来的结构体上同形。
+func TestGatewayInternalErrorWithoutWireRetryableStaysConservative(t *testing.T) {
+	body := []byte(`{"request_id":"req-err","error":{"code":"internal_error","message":"diagnostic","details":{}}}`)
+	err := gatewayErrorFromBytes(body, http.StatusInternalServerError, isGatewayInvocationErrorCode)
+	if err.Code != GatewayInternalError {
+		t.Fatalf("code = %q, want %q", err.Code, GatewayInternalError)
+	}
+	if !err.RetryableByCode() {
+		t.Fatalf("RetryableByCode() = false, want true when the wire omits retryable; error = %#v", err)
+	}
+	if !err.IsRetryable() {
+		t.Fatalf("IsRetryable() = false, want true when the wire omits retryable; error = %#v", err)
+	}
+}
+
+// 显式 null 与字段缺失走同一条路：都不算「服务端说了话」。
+func TestGatewayInternalErrorWithNullRetryableStaysConservative(t *testing.T) {
+	body := []byte(`{"request_id":"req-err","error":{"code":"internal_error","message":"diagnostic","retryable":null,"details":{}}}`)
+	err := gatewayErrorFromBytes(body, http.StatusInternalServerError, isGatewayInvocationErrorCode)
+	if !err.RetryableByCode() {
+		t.Fatalf("RetryableByCode() = false, want true when the wire sends retryable:null; error = %#v", err)
 	}
 }
 
