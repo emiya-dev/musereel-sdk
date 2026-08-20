@@ -534,6 +534,36 @@ func TestGatewayInternalErrorWithNullRetryableStaysConservative(t *testing.T) {
 	}
 }
 
+// 第六象限：协议失败，但 Location 或 body 已经交出 invocation_id。
+// invocation 已经落库（202 之后才解得出这个 ID），此时"重试"不是重试，
+// 是对**同一次逻辑调用**发第二次上游请求——换了幂等键就真的打两枪。
+// 正确动作是拿这个 ID 去 Get/Poll，所以判定必须是不可重试。
+//
+// ⚠ 这一格上面那张表和前两条都覆盖不到：它们要么没有 invocation_id（details 是空的），
+// 要么服务端显式给了 retryable（走前一个分支）。
+func TestGatewayProtocolErrorWithInvocationIDIsNotRetryable(t *testing.T) {
+	err := newGatewayProtocolErrorWithInvocationID(http.StatusAccepted, "inv-01")
+	if err.Code != GatewayInternalError || err.InvocationID != "inv-01" {
+		t.Fatalf("protocol error = %#v", err)
+	}
+	if err.RetryableByCode() {
+		t.Fatalf("RetryableByCode() = true；invocation 已落库还判可重试，调用方会重发 create")
+	}
+	if err.IsRetryable() {
+		t.Fatalf("IsRetryable() = true；invocation 已落库还判可重试，调用方会重发 create")
+	}
+
+	// 正控：同一条协议错误，**没**解出 ID 时仍然是保守可重试——
+	// 缺了这一半，上面两条断言可能只是因为协议错误一律不可重试而绿。
+	bare := newGatewayProtocolError(http.StatusAccepted)
+	if bare.InvocationID != "" {
+		t.Fatalf("bare protocol error 不该带 ID: %#v", bare)
+	}
+	if !bare.RetryableByCode() {
+		t.Fatalf("RetryableByCode() = false；没有 invocation_id 时应保持码表缺省 true")
+	}
+}
+
 // speechDecimalRequest 造一个 speech 请求，parameters 由调用方给。
 func speechRequestWithParameters(raw string) GatewayCreateRequest {
 	request := validGatewayCreateRequest()

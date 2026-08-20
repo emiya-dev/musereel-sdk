@@ -41,8 +41,13 @@ const (
 // 只有 RetryableByCode / IsRetryable 看得见 wire 值。
 // RetryableGatewayCode 保留下来是给「手里只有一个 code 字符串」的场景当保守缺省用的。
 type GatewayError struct {
-	Code         string         `json:"code"`
-	Message      string         `json:"message"`
+	Code    string `json:"code"`
+	Message string `json:"message"`
+
+	// Retryable 是 **wire 原值的直读**，仅供诊断，**不要拿它做重试判断**。
+	// 🔴 服务端**省略** retryable 字段时这里是 `false`，而契约对未登记内部码的保守缺省是
+	// `true`（06:611-619）——也就是说这一个格子会给出与判定方法**相反**的答案。
+	// 判定一律用 RetryableByCode / IsRetryable：只有它们看得见"wire 到底带没带这个字段"。
 	Retryable    bool           `json:"retryable"`
 	RetryAfterMS *int64         `json:"retry_after_ms"`
 	Details      map[string]any `json:"details"`
@@ -104,6 +109,15 @@ func RetryableGatewayCode(code string) bool {
 func (err GatewayError) RetryableByCode() bool {
 	if err.Code == GatewayInternalError && err.retryableFromWire {
 		return err.Retryable
+	}
+	// 🔴 拿到了 invocation_id 就说明 invocation **已经落库**（202 之后才可能解出它）。
+	// 此时把 create 再发一次不是"重试"，是对同一次逻辑调用的**第二次上游请求**——
+	// 换了幂等键就真的会打两枪，正是 06:542-543 要避免的盲目重提。
+	// 正确动作是拿这个 ID 去 Get/Poll，所以这里判不可重试。
+	//
+	// 只在服务端**没有**显式给 retryable 时才由这条兜底：显式值仍然压过它（上一个分支先返回）。
+	if err.Code == GatewayInternalError && err.InvocationID != "" {
+		return false
 	}
 	return RetryableGatewayCode(err.Code)
 }
