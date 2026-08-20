@@ -68,6 +68,22 @@ assert_sha256_shape() {
   esac
 }
 
+# hashed_manifest 记的是**实际发生过**的哈希对拍，不是"打算哈希哪些"的第二份清单。
+# 这个区别是本守卫成立的前提：如果它是一份独立声明，就会重新长出被守的那个洞——
+# 「登记在册、却没人真去哈希」。现在登记这个动作只能由 record_hashed 完成，
+# 而 record_hashed 只在一次真的 file_sha256 对拍通过之后才被调用。
+hashed_manifest=""
+record_hashed() {
+  # $1=contract-input/ 下的相对文件名  $2=刚刚对拍通过的实际 SHA-256
+  #
+  # 之所以硬要第二个参数：让「登记」没法脱离「真的算过」单独发生。
+  # 只收文件名的话，一句 record_hashed "new.json" 就能让一份从没被哈希的文件
+  # 混过清点——那正是本守卫要消灭的形态，只是换了个地方长出来。
+  assert_sha256_shape "$2" "record_hashed($1)"
+  hashed_manifest="${hashed_manifest}
+$1"
+}
+
 file_sha256() {
   if command -v shasum >/dev/null 2>&1; then
     shasum -a 256 "$1" | awk 'NR == 1 { print $1 }'
@@ -90,6 +106,7 @@ if [ "$actual_hash" != "$expected_hash" ]; then
   echo "  actual:        $actual_hash" >&2
   exit 1
 fi
+record_hashed "runtime.proto" "$actual_hash"
 
 codes_actual_hash=$(file_sha256 "$codes_path")
 if [ "$codes_actual_hash" != "$codes_expected_hash" ]; then
@@ -101,6 +118,7 @@ if [ "$codes_actual_hash" != "$codes_expected_hash" ]; then
   echo "        不要手改 JSON 内容来迁就本仓实现。" >&2
   exit 1
 fi
+record_hashed "frozen_public_error_codes.json" "$codes_actual_hash"
 
 # 工具链对账。
 #
@@ -151,6 +169,54 @@ check_toolchain "$pb_path" "protoc" "$pinned_protoc"
 check_toolchain "$grpc_path" "protoc-gen-go-grpc" "$pinned_gen_go_grpc"
 check_toolchain "$grpc_path" "protoc" "$pinned_protoc"
 
+# ---- contract-input/ 目录清点 ----
+#
+# CONTRIBUTING 说 contract-input/ 只能有两类文件：被哈希的 **mirror**，
+# 和装着期望值、因此不自哈希的 **pin record**。在这段之前，那条规矩只是散文——
+# 上面的对拍走的是硬编码路径，不遍历目录，所以再丢一份未哈希的镜像进去门禁照样 OK。
+# 那正是 reference/jcs-server-reference.go.txt 能在 key 排序上悄悄 stale 掉的原因：
+# 它躺在 contract-input/ 下看着像冻结事实，却没有任何东西盯着它。
+#
+# pin_records 是**显式**清单，加一份新的钉记录必须来这里登记一行。这个摩擦是有意的：
+# 「往 contract-input/ 里放东西」应该需要一次决定，而不是放进去就自动被接受。
+pin_records="SOURCE.txt
+GATEWAY_HTTP_ANCHOR.txt"
+
+if [ ! -d "$root_dir/contract-input" ]; then
+  echo "contract pin check: missing $root_dir/contract-input" >&2
+  exit 1
+fi
+
+# grep -Fxq = 固定字符串 + **整行**匹配。整行这一条是承重的：
+# 用子串匹配的话 SOURCE.txt 会顺带放行 MY_SOURCE.txt 和 SOURCE.txt.bak。
+unregistered=$(
+  find "$root_dir/contract-input" -type f -print | while IFS= read -r found_path; do
+    relative=${found_path#"$root_dir/contract-input/"}
+    if printf '%s\n%s\n' "$hashed_manifest" "$pin_records" | grep -Fxq -- "$relative"; then
+      continue
+    fi
+    printf '%s\n' "$relative"
+  done
+)
+
+if [ -n "$unregistered" ]; then
+  echo "contract pin check: contract-input/ 下有既没被哈希、也没登记为 pin record 的文件：" >&2
+  printf '%s\n' "$unregistered" | sed 's/^/    /' >&2
+  echo "" >&2
+  echo "  contract-input/ 只允许两类文件（见 CONTRIBUTING.md）：" >&2
+  echo "    · mirror —— 中枢某个文件的副本，**必须**在本脚本里做 SHA-256 对拍；" >&2
+  echo "      加法：照 runtime.proto 的样子加一次对拍，并在通过后 record_hashed <文件名>。" >&2
+  echo "      同批要往 SOURCE.txt 里加它的 source_commit / sha256 / frozen_at。" >&2
+  echo "    · pin record —— 装期望值的文件，本身不自哈希；加法：登记进本脚本的 pin_records。" >&2
+  echo "" >&2
+  echo "  没有第三类。一份不值得钉的副本就不该放在 contract-input/ 里——" >&2
+  echo "  它会被当成冻结事实读，而没有任何东西保证它还是最新的。" >&2
+  echo "  （如果这是 .DS_Store 之类的杂物：删掉它，或者让 .gitignore 管住它。）" >&2
+  exit 1
+fi
+
 echo "contract pin check: OK ($actual_hash)"
 echo "contract pin check: frozen codes OK ($codes_actual_hash, sluice@${codes_source_commit})"
 echo "contract pin check: toolchain OK (protoc $pinned_protoc, protoc-gen-go $pinned_gen_go, protoc-gen-go-grpc $pinned_gen_go_grpc)"
+inventory_count=$(find "$root_dir/contract-input" -type f | awk 'END { print NR }')
+echo "contract pin check: contract-input inventory OK ($inventory_count files, all hashed or registered)"
