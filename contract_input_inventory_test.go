@@ -80,3 +80,40 @@ func TestContractInputInventoryGateCatchesUnregisteredFile(t *testing.T) {
 		t.Fatalf("探针清理后 pin 门禁仍是红的，工作树可能被污染了：%v\n%s", err, out)
 	}
 }
+
+// 与上面那张探针表相反的一维：**git 已经忽略的文件不该让门禁变红。**
+//
+// 这不是便利性让步。macOS 上在 Finder 里点一下 contract-input/ 就会生成 .DS_Store，
+// 清点不跳过它的话门禁当场红——一条会稳定假红的闸，最后的下场是被人绕过去，
+// 于是它本来要守的东西也一起没了。判据用 git 而不是写死一张杂物名单：
+// 名单永远漏，而"在不在仓里"是仓自己回答的。
+//
+// 负对照：摘掉脚本里那三行 check-ignore 跳过 ⇒ 本用例变红（2026-08-20 实测 REAL_EXIT=1）。
+func TestContractInputInventoryIgnoresGitIgnoredFiles(t *testing.T) {
+	root, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := filepath.Join(root, "scripts", "check-contract-pin.sh")
+
+	// 正控：干净状态先得是绿的，否则下面绿不绿都说明不了问题。
+	if out, err := exec.Command("sh", script).CombinedOutput(); err != nil {
+		t.Fatalf("干净状态下 pin 门禁就是红的：%v\n%s", err, out)
+	}
+
+	probe := filepath.Join(root, "contract-input", ".DS_Store")
+
+	// 先钉住前提：.gitignore 必须真的管住这个探针。少了这一步，哪天 .gitignore 被改，
+	// 本用例会退化成「探针根本不是被忽略的」而仍然绿——那是另一种同形的假绿。
+	if err := os.WriteFile(probe, []byte("finder junk\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Remove(probe) })
+	if err := exec.Command("git", "-C", root, "check-ignore", "-q", "--", probe).Run(); err != nil {
+		t.Fatalf(".gitignore 没有管住 %s —— 本用例的前提不成立，先修 .gitignore", probe)
+	}
+
+	if out, err := exec.Command("sh", script).CombinedOutput(); err != nil {
+		t.Fatalf("git 已忽略的文件让门禁变红了；这条闸会在每台 macOS 开发机上假红：%v\n%s", err, out)
+	}
+}

@@ -192,6 +192,14 @@ fi
 unregistered=$(
   find "$root_dir/contract-input" -type f -print | while IFS= read -r found_path; do
     relative=${found_path#"$root_dir/contract-input/"}
+    # git 已经忽略的文件不算 contract-input 的成员：它不在仓里，没人会把它读成冻结事实。
+    # 不跳过的话，macOS 上在 Finder 里点一下 contract-input/ 就会生成 .DS_Store，
+    # 门禁当场变红——一条会稳定假红的闸，最后的下场是被人绕过去。
+    # ⚠ 判据用 git 而不是写死一张杂物名单：名单永远漏，而"在不在仓里"是仓自己回答的。
+    # 仓外（非 git 检出）时 check-ignore 非零，退化成不跳过，与本改动前一致。
+    if git -C "$root_dir" check-ignore -q -- "$found_path" 2>/dev/null; then
+      continue
+    fi
     if printf '%s\n%s\n' "$hashed_manifest" "$pin_records" | grep -Fxq -- "$relative"; then
       continue
     fi
