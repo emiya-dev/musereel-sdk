@@ -21,7 +21,21 @@ import (
 // 立了规矩，而环境变量表这一维当时没人管——它是本仓唯一没有闸的那张表，
 // 也确实就是唯一烂掉的那张。
 //
-// 🔴 判据必须是**双向**的：README 多列（幽灵变量）和代码多读（漏记文档）都要红。
+// 🔴 **这道闸锁的是「名字集合」，不是那张表的正确性。** 想清楚它不管什么，
+// 比想清楚它管什么更要紧——否则下一个人会把"闸是绿的"读成"表是对的"：
+//
+//	· **不锁必填/可选的分类。** 把 GATEWAY_URL 挪进可选表、或把 EVENT_ID
+//	  写进必填表，名字集合没变，闸照绿。（前者空值 fail-fast，后者空值会
+//	  自动生成 sdk005-conformance-<ns>，两种错分类给读者的后果完全不同。）
+//	· **不锁允许值与默认值。** DELIVERY_MODE 写成接受 sync、video 的 schema
+//	  默认从 3 改成 1，闸都看不见——它不读那些句子。
+//	· **"名字出现过" ≠ "代码真的读它"。** SKU_ID 与 DELIVERY_MODE 同时出现在
+//	  必填 slice 和 fmt.Errorf 的消息里；把它从必填 slice 删掉、只留错误消息，
+//	  闸仍认为代码在读，于是幽灵变量能原样复活。要真正堵住这一条得做 AST，
+//	  那个代价这里不值得——它锁住的是后果最重的那一维（配了完全没反应、
+//	  且没有任何信号），分类和默认值配错至少还会从报错里得到线索。
+//
+// 判据必须是**双向**的：README 多列（幽灵变量）和代码多读（漏记文档）都要红。
 // 只查"README 里的都存在"这一个方向，把表整个删空也能过闸。
 //
 // ⚠ 这道闸对"提及"和"列表项"不作区分——README 里**任何地方**写出完整变量名都算数。
@@ -44,7 +58,7 @@ func conformanceEnvNamesIn(t *testing.T, path string, skipComments bool) map[str
 	names := map[string]struct{}{}
 	for _, line := range strings.Split(string(raw), "\n") {
 		if skipComments {
-			if index := strings.Index(line, "//"); index >= 0 {
+			if index := commentStart(line); index >= 0 {
 				line = line[:index]
 			}
 		}
@@ -53,6 +67,27 @@ func conformanceEnvNamesIn(t *testing.T, path string, skipComments bool) map[str
 		}
 	}
 	return names
+}
+
+// commentStart 找出行注释的起点，**跳过 scheme://** 里那对斜杠。
+//
+// 直接用 strings.Index(line, "//") 是不行的：一行里只要出现 https://，
+// 这行就会从协议分隔符处被截断，后面真实的 os.Getenv 一起被当成注释丢掉，
+// 于是那个变量不进 codeNames——README 没列它也不会红（漏记那一侧假绿），
+// 而 README 列了它反倒会被判成幽灵变量（另一侧假红）。两个方向都会坏。
+// 当前 conformance/*.go 里零 URL，所以这从来没发作过；它是个迟早会踩的口子，
+// 不是现存缺陷。
+func commentStart(line string) int {
+	for index := 0; index+1 < len(line); index++ {
+		if line[index] != '/' || line[index+1] != '/' {
+			continue
+		}
+		if index > 0 && line[index-1] == ':' {
+			continue
+		}
+		return index
+	}
+	return -1
 }
 
 func sortedNames(set map[string]struct{}) []string {
