@@ -808,8 +808,11 @@ func decodeGatewayJSONValue(raw []byte, path string) (any, error) {
 // 只认顶层的白名单结构上就够不到）。
 //
 // 「能不能规范化」这个判据则与 jcs 子集**同源**——见 jcs/jcs.go 对 json.Number 的
-// 两条限制，那个包是中枢冻结参考实现（contract-input/reference/jcs-server-reference.go.txt）
-// 的镜像，跟着它走就没有跨仓漂移。中枢对同一条错误自己也是这么判的
+// 两条限制，那个包镜像的是中枢 backend/pkg/app/core/jcs.go 的现行实现，跟着它走就
+// 没有跨仓漂移。⚠ 这里原先引的是 contract-input/reference/jcs-server-reference.go.txt，
+// 那份副本已删除：它在 key 排序上已经 stale（还写着 sort.Strings 的 UTF-8 序，而两边
+// 现行实现都是 UTF-16 序），而 pin 门禁根本没哈希它——照它走恰恰会漂移。
+// 中枢对同一条错误自己也是这么判的
 // （backend/pkg/app/core/jcs.go 拒小数，gateway 侧把它翻译成
 // 「schema 中的 JSON 数字不能使用小数或指数，请改用整数十进制」）。
 //

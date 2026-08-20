@@ -13,10 +13,19 @@ the source checkout, update the source commit, SHA-256, and freeze date in the
 pin record, and run the local gate. A hash mismatch is a failed change.
 
 The gateway HTTP surface is anchored by
-`contract-input/GATEWAY_HTTP_ANCHOR.txt`: frozen chapter `06`, document
-version `v0.9`, freeze date `2026-08-05`, and five routes. The route contract is
-owned by Sluice and is not reimplemented or copied into this repository by
-SDK-001.
+`contract-input/GATEWAY_HTTP_ANCHOR.txt`. Read the chapter, source commit,
+route count, and freeze date **from that file**. They are deliberately not
+restated here: this paragraph used to say `v0.9` / `2026-08-05` / five routes
+and stayed wrong for months after the anchor moved to four routes at
+`2026-08-18`, because no gate compares prose against the anchor. The route
+contract is owned by Sluice and is not reimplemented or copied into this
+repository.
+
+Every file under `contract-input/` must be hashed by
+`scripts/check-contract-pin.sh`. Do not add an unpinned file there — it will
+read as frozen fact while nothing keeps it current. If a reference copy is
+worth keeping, pin it; if it is not worth pinning, it does not belong in
+`contract-input/`.
 
 ## Breaking-change discipline (frozen §1.2)
 
