@@ -242,9 +242,11 @@ func (client *RuntimeClient) ConfirmRegistration(ctx context.Context, request *r
 	return reply, nil
 }
 
-// CreateOrder fixes offer_price_id and protects one order creation with
-// idempotency_key. Generated price amounts are carried as strings without SDK
-// parsing or reformatting.
+// CreateOrder binds offer_price_id into the signed request fingerprint and
+// protects one order creation with idempotency_key. It does not modify the
+// price identifier; binding means the assertion covers exactly the offer price
+// this call was made against. Generated price amounts are carried as strings
+// without SDK parsing or reformatting.
 func (client *RuntimeClient) CreateOrder(ctx context.Context, request *runtimepb.CreateOrderRequest, options ...grpc.CallOption) (*runtimepb.CreateOrderReply, error) {
 	if request == nil {
 		return nil, fmt.Errorf("create order request is nil")
